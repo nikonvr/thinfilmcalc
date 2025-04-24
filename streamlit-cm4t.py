@@ -1,4 +1,3 @@
-# -*- coding: utf-8 -*-
 import streamlit as st
 import numpy as np
 import matplotlib
@@ -756,7 +755,8 @@ with st.sidebar.expander("Monitoring", expanded=False):
 st.sidebar.markdown("---")
 run_calculation = st.sidebar.button("🚀 Run Calculation", use_container_width=True, type="primary")
 st.sidebar.markdown("---")
-st.checkbox("Prepare Excel Export", value=st.session_state.export_excel, key="export_cb")
+st.sidebar.checkbox("Prepare Excel Export", value=st.session_state.export_excel, key="export_cb")
+
 
 main_content_col, help_col = st.columns([3, 1])
 
@@ -932,4 +932,4 @@ elif st.session_state.export_excel and not st.session_state.results:
      st.sidebar.warning("Run calculation first to enable export.")
 
 st.sidebar.markdown("---")
-st.sidebar.caption("Thin Film Calculator v1.8-en")
+st.sidebar.caption("Thin Film Calculator v1.9-en")
