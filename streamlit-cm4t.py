@@ -1,4 +1,3 @@
-# -*- coding: utf-8 -*-
 import streamlit as st
 import numpy as np
 import matplotlib
@@ -222,7 +221,7 @@ def calculate_stack_properties(nH, nL, nSub, l0, stack_string, wl_range, wl_step
 
         M_layer_s, _ = calculate_transfer_matrix('s', monitoring_wavelength, monitoring_angle_rad, Ni, layer_thickness)
         M_cumulative_s = M_layer_s @ M_before_layer
-        
+
         denom_s = (eta_inc_s_mon * M_cumulative_s[0, 0] + eta_sub_s_mon * M_cumulative_s[1, 1] + eta_inc_s_mon * eta_sub_s_mon * M_cumulative_s[0, 1] + M_cumulative_s[1, 0])
         ts_inf = 2 * eta_inc_s_mon / denom_s if abs(denom_s) > 1e-12 else 0.0
         Ts_inf = 0.0
@@ -313,21 +312,23 @@ def plot_index_and_monitoring(res, params, layer_multipliers):
     nL_r = np.real(params['nL'])
     nSub = np.real(params['nSub'])
     monitoring_wavelength = res['monitoring_wavelength']
-    points_per_layer = res['points_per_layer']
     physical_thicknesses = res['physical_thicknesses']
-
     real_indices = [nH_r if i % 2 == 0 else nL_r for i in range(len(layer_multipliers))]
     cumulative_thicknesses = np.cumsum(physical_thicknesses)
-
     last_cumulative_thickness = cumulative_thicknesses[-1] if len(cumulative_thicknesses) > 0 else 0
-    x_coords_index = np.concatenate(([-50, 0], cumulative_thicknesses, [last_cumulative_thickness + 51]))
-    y_coords_index = np.concatenate(([nSub, nSub], real_indices, [1]))
+
+    if len(cumulative_thicknesses) > 0:
+        x_coords_index = np.concatenate(([-50, 0], cumulative_thicknesses, [last_cumulative_thickness + 51]))
+        y_coords_index = np.concatenate(([nSub], real_indices, [1, 1]))
+    else:
+        x_coords_index = np.array([-50, 0, 51])
+        y_coords_index = np.array([nSub, 1, 1])
 
     ax1.plot(x_coords_index, y_coords_index, drawstyle='steps-post', label='n (real)', color='green')
     ax1.set_xlabel('Cumulative Thickness (nm)')
     ax1.set_ylabel('Real Part of Refractive Index (n)', color='green')
     ax1.tick_params(axis='y', labelcolor='green')
-    ax1.set_title('Index Profile & Monitoring')
+    ax1.set_title('Index Profile & Monitoring Curve')
     ax1.grid(which='major', axis='x', color='grey', linestyle='-', linewidth=0.7)
     ax1.grid(which='minor', axis='x', color='lightgrey', linestyle=':', linewidth=0.5)
     ax1.minorticks_on()
@@ -600,6 +601,7 @@ def generate_excel_output(res, params, layer_multipliers):
                      worksheet.set_column(0, 0, idx_width)
                  except Exception as e_idx_width:
                      st.warning(f"Could not set width for index col in sheet '{sheet_name}': {e_idx_width}")
+
 
     output.seek(0)
     return output
@@ -918,4 +920,4 @@ else:
     st.info("Configure parameters in the sidebar and click 'Run Calculation'.")
 
 st.sidebar.markdown("---")
-st.sidebar.caption("Thin Film Calculator v1.6-en")
+st.sidebar.caption("Thin Film Calculator v1.7-en")
