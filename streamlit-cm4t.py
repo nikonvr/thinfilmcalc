@@ -1,4 +1,5 @@
 # -*- coding: utf-8 -*-
+# (Imports remain the same)
 import streamlit as st
 import numpy as np
 import matplotlib
@@ -12,19 +13,19 @@ from scipy.interpolate import make_interp_spline
 import numba
 import traceback
 
+# --- Numba JIT functions ---
 @numba.jit(nopython=True, cache=True)
 def calculate_transfer_matrix(polarization, wavelength, incidence_rad, n_layer, layer_thickness):
+    # ... (code from previous answer) ...
     alpha = np.sin(incidence_rad)
     n_layer_complex = np.complex128(n_layer)
     sqrt_term_sq = n_layer_complex**2 - alpha**2
-
     if np.real(sqrt_term_sq) < -1e-12:
          sqrt_val = 1j * np.sqrt(-sqrt_term_sq)
     elif abs(np.real(sqrt_term_sq)) < 1e-12 and abs(np.imag(sqrt_term_sq)) < 1e-12:
           sqrt_val = 1e-6 + 0j
     else:
          sqrt_val = np.sqrt(sqrt_term_sq)
-
     if polarization == 'p':
          if abs(sqrt_val) < 1e-9:
              eta = np.inf + 0j
@@ -32,9 +33,7 @@ def calculate_transfer_matrix(polarization, wavelength, incidence_rad, n_layer, 
               eta = n_layer_complex**2 / sqrt_val
     else:
          eta = sqrt_val
-
     phi = (2 * np.pi / wavelength) * sqrt_val * layer_thickness
-
     cos_phi = np.cos(phi)
     sin_phi = np.sin(phi)
     sin_phi_over_eta = 0j
@@ -42,23 +41,21 @@ def calculate_transfer_matrix(polarization, wavelength, incidence_rad, n_layer, 
         sin_phi_over_eta = (1j / eta) * sin_phi
     elif abs(sin_phi) > 1e-9:
          sin_phi_over_eta = np.inf + 0j
-
     m_layer = np.array([[cos_phi, sin_phi_over_eta],
                        [1j * eta * sin_phi, cos_phi]], dtype=np.complex128)
     return m_layer, eta
 
 @numba.jit(nopython=True, cache=True)
 def calculate_admittances(polarization, incidence_rad, n_inc, n_sub):
+    # ... (code from previous answer) ...
      alpha = np.sin(incidence_rad)
      n_inc_complex = np.complex128(n_inc)
      n_sub_complex = np.complex128(n_sub)
      eta_inc, eta_sub = 0j, 0j
-
      sqrt_term_inc_sq = n_inc_complex**2 - alpha**2
      if np.real(sqrt_term_inc_sq) < -1e-12 : sqrt_val_inc = 1j * np.sqrt(-sqrt_term_inc_sq)
      elif abs(np.real(sqrt_term_inc_sq)) < 1e-12 and abs(np.imag(sqrt_term_inc_sq)) < 1e-12: sqrt_val_inc = 1e-6 + 0j
      else: sqrt_val_inc = np.sqrt(sqrt_term_inc_sq)
-
      if polarization == 'p':
           if abs(sqrt_val_inc) < 1e-9:
               eta_inc = np.inf + 0j
@@ -66,12 +63,10 @@ def calculate_admittances(polarization, incidence_rad, n_inc, n_sub):
               eta_inc = n_inc_complex**2 / sqrt_val_inc
      else:
           eta_inc = sqrt_val_inc
-
      sqrt_term_sub_sq = n_sub_complex**2 - alpha**2
      if np.real(sqrt_term_sub_sq) < -1e-12 : sqrt_val_sub = 1j * np.sqrt(-sqrt_term_sub_sq)
      elif abs(np.real(sqrt_term_sub_sq)) < 1e-12 and abs(np.imag(sqrt_term_sub_sq)) < 1e-12 : sqrt_val_sub = 1e-6 + 0j
      else : sqrt_val_sub = np.sqrt(sqrt_term_sub_sq)
-
      if polarization == 'p':
           if abs(sqrt_val_sub) < 1e-9:
               eta_sub = np.inf + 0j
@@ -79,18 +74,17 @@ def calculate_admittances(polarization, incidence_rad, n_inc, n_sub):
               eta_sub = n_sub_complex**2 / sqrt_val_sub
      else:
           eta_sub = sqrt_val_sub
-
      return eta_inc, eta_sub
 
+# --- Non-JIT Calculation Functions ---
 def calculate_global_RT(wavelengths, angles_rad, nH, nL, nSub, physical_thicknesses, finite_substrate, incident_medium_index=1.0):
+    # ... (code from previous answer) ...
     RT = np.zeros((len(wavelengths), len(angles_rad), 4))
     matrix_cache = {}
-
     for i_wl, wl in enumerate(wavelengths):
         for i_ang, ang_rad in enumerate(angles_rad):
             M_total_s = np.eye(2, dtype=np.complex128)
             M_total_p = np.eye(2, dtype=np.complex128)
-
             for i_layer, thickness in enumerate(physical_thicknesses):
                 Ni = nH if i_layer % 2 == 0 else nL
                 key_s = (i_layer, wl, ang_rad, 's')
@@ -98,72 +92,52 @@ def calculate_global_RT(wavelengths, angles_rad, nH, nL, nSub, physical_thicknes
                     matrix_cache[key_s], _ = calculate_transfer_matrix('s', wl, ang_rad, Ni, thickness)
                 M_layer_s = matrix_cache[key_s]
                 M_total_s = M_layer_s @ M_total_s
-
                 key_p = (i_layer, wl, ang_rad, 'p')
                 if key_p not in matrix_cache:
                     matrix_cache[key_p], _ = calculate_transfer_matrix('p', wl, ang_rad, Ni, thickness)
                 M_layer_p = matrix_cache[key_p]
                 M_total_p = M_layer_p @ M_total_p
-
             eta_inc_s, eta_sub_s = calculate_admittances('s', ang_rad, incident_medium_index, nSub)
             eta_inc_p, eta_sub_p = calculate_admittances('p', ang_rad, incident_medium_index, nSub)
-
             Ms = M_total_s
             denom_s = (eta_inc_s * Ms[0, 0] + eta_sub_s * Ms[1, 1] + eta_inc_s * eta_sub_s * Ms[0, 1] + Ms[1, 0])
             if abs(denom_s) < 1e-12:
-                rs_inf = 1.0
-                ts_inf = 0.0
+                rs_inf = 1.0; ts_inf = 0.0
             else:
                 rs_inf = (eta_inc_s * Ms[0, 0] - eta_sub_s * Ms[1, 1] + eta_inc_s * eta_sub_s * Ms[0, 1] - Ms[1, 0]) / denom_s
                 ts_inf = 2 * eta_inc_s / denom_s
-
             Rs_inf = np.abs(rs_inf)**2
-            if abs(np.real(eta_inc_s)) < 1e-12:
-                 Ts_inf = 0.0
-            else:
-                 Ts_inf = np.real(eta_sub_s) / np.real(eta_inc_s) * np.abs(ts_inf)**2
-
+            if abs(np.real(eta_inc_s)) < 1e-12: Ts_inf = 0.0
+            else: Ts_inf = np.real(eta_sub_s) / np.real(eta_inc_s) * np.abs(ts_inf)**2
             Mp = M_total_p
             denom_p = (eta_inc_p * Mp[0, 0] + eta_sub_p * Mp[1, 1] + eta_inc_p * eta_sub_p * Mp[0, 1] + Mp[1, 0])
             if abs(denom_p) < 1e-12:
-                rp_inf = 1.0
-                tp_inf = 0.0
+                rp_inf = 1.0; tp_inf = 0.0
             else:
                 rp_inf = (eta_inc_p * Mp[0, 0] - eta_sub_p * Mp[1, 1] + eta_inc_p * eta_sub_p * Mp[0, 1] - Mp[1, 0]) / denom_p
                 tp_inf = 2 * eta_inc_p / denom_p
-
             Rp_inf = np.abs(rp_inf)**2
-            if abs(np.real(eta_inc_p)) < 1e-12:
-                 Tp_inf = 0.0
-            else:
-                 Tp_inf = np.real(eta_sub_p) / np.real(eta_inc_p) * np.abs(tp_inf)**2
-
+            if abs(np.real(eta_inc_p)) < 1e-12: Tp_inf = 0.0
+            else: Tp_inf = np.real(eta_sub_p) / np.real(eta_inc_p) * np.abs(tp_inf)**2
             if finite_substrate:
                 eta_inc_rev_s, eta_sub_rev_s = calculate_admittances('s', ang_rad, nSub, incident_medium_index)
                 eta_inc_rev_p, eta_sub_rev_p = calculate_admittances('p', ang_rad, nSub, incident_medium_index)
-
                 denom_bs = eta_inc_rev_s + eta_sub_rev_s
                 Rb_s = np.abs((eta_inc_rev_s - eta_sub_rev_s) / denom_bs)**2 if abs(denom_bs) > 1e-12 else 1.0
-
                 denom_bp = eta_inc_rev_p + eta_sub_rev_p
                 Rb_p = np.abs((eta_inc_rev_p - eta_sub_rev_p) / denom_bp)**2 if abs(denom_bp) > 1e-12 else 1.0
-
                 denom_Rs_corr = 1 - Rs_inf * Rb_s
                 Rs = Rs_inf + (Ts_inf * Rb_s * Ts_inf / denom_Rs_corr) if abs(denom_Rs_corr) > 1e-12 else Rs_inf
                 Ts = (Ts_inf * (1 - Rb_s) / denom_Rs_corr) if abs(denom_Rs_corr) > 1e-12 else Ts_inf * (1 - Rb_s)
-
                 denom_Rp_corr = 1 - Rp_inf * Rb_p
                 Rp = Rp_inf + (Tp_inf * Rb_p * Tp_inf / denom_Rp_corr) if abs(denom_Rp_corr) > 1e-12 else Rp_inf
                 Tp = (Tp_inf * (1 - Rb_p) / denom_Rp_corr) if abs(denom_Rp_corr) > 1e-12 else Tp_inf * (1 - Rb_p)
-
             else:
                 Rs, Ts, Rp, Tp = Rs_inf, Ts_inf, Rp_inf, Tp_inf
-
             RT[i_wl, i_ang, 0] = np.clip(np.nan_to_num(Rs), 0, 1)
             RT[i_wl, i_ang, 1] = np.clip(np.nan_to_num(Rp), 0, 1)
             RT[i_wl, i_ang, 2] = np.clip(np.nan_to_num(Ts), 0, 1)
             RT[i_wl, i_ang, 3] = np.clip(np.nan_to_num(Tp), 0, 1)
-
     return RT
 
 def calculate_stack_properties(nH, nL, nSub, l0, stack_string, wl_range, wl_step, ang_range, ang_step, incidence_angle_deg, points_per_layer, finite_substrate, monitoring_wavelength):
@@ -208,6 +182,7 @@ def calculate_stack_properties(nH, nL, nSub, l0, stack_string, wl_range, wl_step
     if abs(np.real(eta_inc_s_bare)) > 1e-12:
         Ts_bare_inf = np.real(eta_sub_s_bare) / np.real(eta_inc_s_bare) * np.abs(ts_bare)**2
 
+    Rb_s_mon = 0.0 # Default for infinite substrate
     if finite_substrate:
          eta_inc_rev_s_bare, eta_sub_rev_s_bare = calculate_admittances('s', monitoring_angle_rad, nSub, incident_medium_index)
          denom_bs_bare = eta_inc_rev_s_bare + eta_sub_rev_s_bare
@@ -215,6 +190,7 @@ def calculate_stack_properties(nH, nL, nSub, l0, stack_string, wl_range, wl_step
          Rs_bare_inf = np.abs((eta_inc_s_bare - eta_sub_s_bare) / denom_s_bare)**2 if abs(denom_s_bare) > 1e-12 else 1.0
          denom_T_bare_corr = 1 - Rs_bare_inf * Rb_s_bare
          T_substrate_bare = (Ts_bare_inf * (1 - Rb_s_bare) / denom_T_bare_corr) if abs(denom_T_bare_corr) > 1e-12 else Ts_bare_inf * (1 - Rb_s_bare)
+         Rb_s_mon = Rb_s_bare # Use the same back reflectance for monitoring
     else:
          T_substrate_bare = Ts_bare_inf
 
@@ -223,19 +199,15 @@ def calculate_stack_properties(nH, nL, nSub, l0, stack_string, wl_range, wl_step
     M_cumulative_s = np.eye(2, dtype=np.complex128)
     current_cumulative_thickness = 0.0
     eta_inc_s_mon, eta_sub_s_mon = calculate_admittances('s', monitoring_angle_rad, incident_medium_index, nSub)
-    Rb_s_mon = 0.0
-    if finite_substrate:
-        eta_inc_rev_s_mon, _ = calculate_admittances('s', monitoring_angle_rad, nSub, incident_medium_index)
-        denom_bs_mon = eta_inc_rev_s_mon + incident_medium_index
-        Rb_s_mon = np.abs((eta_inc_rev_s_mon - incident_medium_index) / denom_bs_mon)**2 if abs(denom_bs_mon) > 1e-12 else 1.0
-
 
     for i_layer, layer_thickness in enumerate(physical_thicknesses):
         Ni = nH if i_layer % 2 == 0 else nL
+        M_before_layer = M_cumulative_s.copy() # Matrix up to the start of this layer
+
         for k in range(1, points_per_layer + 1):
              partial_thickness = layer_thickness * k / (points_per_layer + 1)
              M_segment_s, _ = calculate_transfer_matrix('s', monitoring_wavelength, monitoring_angle_rad, Ni, partial_thickness)
-             M_intermediate = M_segment_s @ M_cumulative_s
+             M_intermediate = M_segment_s @ M_before_layer
 
              denom_s = (eta_inc_s_mon * M_intermediate[0, 0] + eta_sub_s_mon * M_intermediate[1, 1] + eta_inc_s_mon * eta_sub_s_mon * M_intermediate[0, 1] + M_intermediate[1, 0])
              ts_inf = 2 * eta_inc_s_mon / denom_s if abs(denom_s) > 1e-12 else 0.0
@@ -255,8 +227,7 @@ def calculate_stack_properties(nH, nL, nSub, l0, stack_string, wl_range, wl_step
              thicknesses_intermediate.append(current_cumulative_thickness + partial_thickness)
 
         M_layer_s, _ = calculate_transfer_matrix('s', monitoring_wavelength, monitoring_angle_rad, Ni, layer_thickness)
-        M_cumulative_s = M_layer_s @ M_cumulative_s
-        current_cumulative_thickness += layer_thickness
+        M_cumulative_s = M_layer_s @ M_before_layer # Update cumulative matrix *after* using the previous one
 
         denom_s = (eta_inc_s_mon * M_cumulative_s[0, 0] + eta_sub_s_mon * M_cumulative_s[1, 1] + eta_inc_s_mon * eta_sub_s_mon * M_cumulative_s[0, 1] + M_cumulative_s[1, 0])
         ts_inf = 2 * eta_inc_s_mon / denom_s if abs(denom_s) > 1e-12 else 0.0
@@ -273,6 +244,8 @@ def calculate_stack_properties(nH, nL, nSub, l0, stack_string, wl_range, wl_step
              T_end_layer = Ts_inf
 
         transmissions_at_interfaces.append(np.clip(np.nan_to_num(T_end_layer), 0, 1))
+        current_cumulative_thickness += layer_thickness
+
 
     results = {
         'wavelengths': wavelengths, 'incidence_angle_spectral_deg': np.array([incidence_angle_deg]),
@@ -385,31 +358,36 @@ def plot_index_and_monitoring(res, params, layer_multipliers):
 
     x_smooth_start = -50
     x_smooth_end = last_cumulative_thickness + 50
-    thicknesses_extended = np.concatenate(([x_smooth_start], thicknesses_sorted, [x_smooth_end]))
-    transmissions_extended = np.concatenate(([transmissions_sorted[0] if len(transmissions_sorted)>0 else 0], transmissions_sorted, [transmissions_sorted[-1] if len(transmissions_sorted)>0 else 0]))
-
-    if len(thicknesses_extended) > 3:
-        num_smooth_points = max(100, len(thicknesses_extended) * 5)
-        thickness_coords_smooth = np.linspace(x_smooth_start, x_smooth_end, num_smooth_points)
-        try:
-             spl = make_interp_spline(thicknesses_extended, transmissions_extended, k=3)
-             transmissions_coords_smooth = spl(thickness_coords_smooth)
-             transmissions_coords_smooth = np.clip(transmissions_coords_smooth, 0, 1)
-             line_transmittance, = ax2.plot(thickness_coords_smooth, transmissions_coords_smooth, 'r-', linewidth=1.5, label=f'T @ {monitoring_wavelength:.0f} nm (smoothed)')
-        except Exception as e_spline:
-             st.warning(f"Could not generate monitoring spline: {e_spline}. Plotting calculated points only.")
-             line_transmittance, = ax2.plot(thicknesses_sorted, transmissions_sorted, 'r-', linewidth=1.5, label=f'T @ {monitoring_wavelength:.0f} nm')
-
-    else:
-         line_transmittance, = ax2.plot(thicknesses_extended, transmissions_extended, 'r-', linewidth=1.5, label=f'T @ {monitoring_wavelength:.0f} nm')
 
     ax2.plot(thicknesses_sorted, transmissions_sorted, 'ro', markersize=3, label='Calculated points')
+
+    if len(thicknesses_sorted) > 3 and last_cumulative_thickness > 0:
+        num_smooth_points = max(100, len(thicknesses_sorted) * 5)
+        thickness_coords_smooth = np.linspace(0, last_cumulative_thickness, num_smooth_points)
+        try:
+             spl = make_interp_spline(thicknesses_sorted, transmissions_sorted, k=3, bc_type='natural')
+             transmissions_coords_smooth = spl(thickness_coords_smooth)
+             transmissions_coords_smooth = np.clip(transmissions_coords_smooth, 0, 1)
+             ax2.plot(thickness_coords_smooth, transmissions_coords_smooth, 'r-', linewidth=1.5, label=f'T @ {monitoring_wavelength:.0f} nm (smoothed)')
+        except Exception as e_spline:
+             st.warning(f"Could not generate monitoring spline: {e_spline}. Plotting linear segments.")
+             ax2.plot(thicknesses_sorted, transmissions_sorted, 'r-', linewidth=1.0, label=f'T @ {monitoring_wavelength:.0f} nm (linear)')
+    else:
+         ax2.plot(thicknesses_sorted, transmissions_sorted, 'r-', linewidth=1.0, label=f'T @ {monitoring_wavelength:.0f} nm (linear)')
+
+    if len(transmissions_sorted) > 0:
+        t_start = transmissions_sorted[0]
+        t_end = transmissions_sorted[-1]
+        ax2.plot([x_smooth_start, 0], [t_start, t_start], 'r:', linewidth=1.0, label='_nolegend_')
+        ax2.plot([last_cumulative_thickness, x_smooth_end], [t_end, t_end], 'r:', linewidth=1.0, label='_nolegend_')
+
 
     ax1.set_xlim(x_smooth_start, x_smooth_end)
     ax2.legend(loc='upper right')
     ax1.legend(loc='upper left')
     plt.tight_layout()
     return fig
+
 
 def plot_stack_structure(res, params, layer_multipliers):
     fig, ax = plt.subplots(figsize=(7, max(3, len(layer_multipliers)*0.4)))
@@ -474,10 +452,11 @@ def plot_complex_rs(res, params, layer_multipliers):
     for i_layer, layer_thickness in enumerate(physical_thicknesses):
         Ni = nH if i_layer % 2 == 0 else nL
         color = 'blue' if i_layer % 2 == 0 else 'red'
+        M_before_layer = M_cumulative_s.copy()
         for k in range(1, points_per_layer + 1):
             partial_thickness = layer_thickness * k / (points_per_layer + 1)
             M_segment_s, _ = calculate_transfer_matrix('s', monitoring_wavelength, monitoring_angle_rad, Ni, partial_thickness)
-            M_intermediate = M_segment_s @ M_cumulative_s
+            M_intermediate = M_segment_s @ M_before_layer
 
             denom_s = (eta_inc_s * M_intermediate[0, 0] + eta_sub_s * M_intermediate[1, 1] + eta_inc_s * eta_sub_s * M_intermediate[0, 1] + M_intermediate[1, 0])
             rs_intermediate = (eta_inc_s * M_intermediate[0, 0] - eta_sub_s * M_intermediate[1, 1] + eta_inc_s * eta_sub_s * M_intermediate[0, 1] - M_intermediate[1, 0]) / denom_s if abs(denom_s) > 1e-12 else 1.0
@@ -487,7 +466,7 @@ def plot_complex_rs(res, params, layer_multipliers):
             ax.plot(np.real(rs_intermediate), np.imag(rs_intermediate), marker='o', linestyle='none', markersize=2, color=color, alpha=0.6)
 
         M_layer_s, _ = calculate_transfer_matrix('s', monitoring_wavelength, monitoring_angle_rad, Ni, layer_thickness)
-        M_cumulative_s = M_layer_s @ M_cumulative_s
+        M_cumulative_s = M_layer_s @ M_before_layer
         current_cumulative_thickness += layer_thickness
 
         denom_s = (eta_inc_s * M_cumulative_s[0, 0] + eta_sub_s * M_cumulative_s[1, 1] + eta_inc_s * eta_sub_s * M_cumulative_s[0, 1] + M_cumulative_s[1, 0])
@@ -519,6 +498,7 @@ def plot_complex_rs(res, params, layer_multipliers):
     else:
         ax.plot(rs_sorted_real, rs_sorted_imag, '-', color='black', linewidth=0.8, alpha=0.7, zorder=-1)
 
+
     ax.set_xlabel('Re(rs)')
     ax.set_ylabel('Im(rs)')
     ax.set_title(f'Complex Plane: rs (S-Pol, λ={monitoring_wavelength:.0f} nm, θ={params["incidence_angle_deg"]:.1f}°)')
@@ -545,8 +525,8 @@ def generate_excel_output(res, params, layer_multipliers):
         params_dict_export = params.copy()
         params_dict_export['nH'] = f"{np.real(params['nH']):.4f}{np.imag(params['nH']):+.4f}j"
         params_dict_export['nL'] = f"{np.real(params['nL']):.4f}{np.imag(params['nL']):+.4f}j"
-        if 'l_range' in params_dict_export: params_dict_export['l_range'] = str(params_dict_export['l_range'])
-        if 'a_range' in params_dict_export: params_dict_export['a_range'] = str(params_dict_export['a_range'])
+        if 'wl_range' in params_dict_export: params_dict_export['wl_range'] = str(params_dict_export['wl_range'])
+        if 'ang_range' in params_dict_export: params_dict_export['ang_range'] = str(params_dict_export['ang_range'])
 
         dfs_for_excel['Parameters'] = pd.DataFrame.from_dict(params_dict_export, orient='index', columns=['Value'])
         dfs_for_excel['Parameters'].loc['Stack String'] = params['stack_string']
@@ -610,7 +590,6 @@ def generate_excel_output(res, params, layer_multipliers):
                      worksheet.set_column(0, 0, idx_width)
                  except Exception as e_idx_width:
                      st.warning(f"Could not set width for index col in sheet '{sheet_name}': {e_idx_width}")
-
 
     output.seek(0)
     return output
@@ -703,6 +682,7 @@ This application calculates the theoretical reflectance (R) and transmittance (T
    * **Errors on Run:** Check parameter sanity (e.g., End > Start for ranges, non-zero steps, valid stack string format, non-zero real indices). Look for specific error messages.
    * **Slow Calculation:** Reduce the number of spectral/angular points (increase step size), decrease 'Pts per Layer' for monitoring, or simulate simpler stacks. Numba optimization helps but large calculations still take time. The *first* run after code changes might be slower due to Numba compilation.
    * **Excel Export Issues:** Ensure calculation completed successfully and the checkbox was ticked *before* running. Check for warnings during Excel file preparation.
+   * **Plot Issues:** If plots look incorrect, double-check input parameters (indices, stack definition) and calculation ranges. Ensure the monitoring wavelength is within the spectral range if comparing results.
 
 **7. Contact:**
 For further assistance, questions, or bug reports, please contact Fabien Lemarchand at: **fabien.lemarchand@gmail.com**
@@ -928,4 +908,4 @@ else:
     st.info("Configure parameters in the sidebar and click 'Run Calculation'.")
 
 st.sidebar.markdown("---")
-st.sidebar.caption("Thin Film Calculator v1.4-en")
+st.sidebar.caption("Thin Film Calculator v1.5-en")
