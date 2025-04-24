@@ -10,10 +10,63 @@ import datetime
 import io
 from scipy.interpolate import make_interp_spline
 
+def calcul_M(pol, l_calc, theta_calc, Ni, ep_couche):
+    alpha = np.sin(theta_calc)
+    sqrt_term_sq = Ni**2 - alpha**2
+    if np.real(sqrt_term_sq) < 0:
+         sqrt_val = 1j * np.sqrt(-sqrt_term_sq)
+    elif abs(np.real(sqrt_term_sq)) < 1e-12 :
+          sqrt_val = 1e-6
+    else:
+         sqrt_val = np.sqrt(sqrt_term_sq)
+
+    if pol == 'p':
+         if abs(sqrt_val) < 1e-9:
+             eta = np.inf
+         else:
+              eta = Ni**2 / sqrt_val
+    else:
+         eta = sqrt_val
+
+    phi = (2 * np.pi / l_calc) * sqrt_val * ep_couche
+
+    sin_phi_over_eta = 0j
+    if abs(eta) > 1e-12:
+        sin_phi_over_eta = (1j / eta) * np.sin(phi)
+    elif abs(np.sin(phi)) > 1e-9:
+         sin_phi_over_eta = np.inf + 0j
+
+    M_layer = np.array([[np.cos(phi), sin_phi_over_eta],
+                      [1j * eta * np.sin(phi), np.cos(phi)]], dtype=complex)
+    return M_layer, eta
+
+def calcul_etats(pol, theta_calc, n_inc, n_sub):
+     alpha = np.sin(theta_calc)
+     etainc, etasub = 0j, 0j
+
+     sqrt_term_inc_sq = n_inc**2 - alpha**2
+     if np.real(sqrt_term_inc_sq) < 0 : sqrt_val_inc = 1j * np.sqrt(-sqrt_term_inc_sq)
+     elif abs(np.real(sqrt_term_inc_sq)) < 1e-12: sqrt_val_inc = 1e-6
+     else: sqrt_val_inc = np.sqrt(sqrt_term_inc_sq)
+
+     if pol == 'p':
+          etainc = n_inc**2 / sqrt_val_inc if abs(sqrt_val_inc) > 1e-9 else np.inf
+     else:
+          etainc = sqrt_val_inc
+
+     sqrt_term_sub_sq = n_sub**2 - alpha**2
+     if np.real(sqrt_term_sub_sq) < 0 : sqrt_val_sub = 1j * np.sqrt(-sqrt_term_sub_sq)
+     elif abs(np.real(sqrt_term_sub_sq)) < 1e-12 : sqrt_val_sub = 1e-6
+     else : sqrt_val_sub = np.sqrt(sqrt_term_sub_sq)
+
+     if pol == 'p':
+          etasub = n_sub**2 / sqrt_val_sub if abs(sqrt_val_sub) > 1e-9 else np.inf
+     else:
+          etasub = sqrt_val_sub
+
+     return etainc, etasub
+
 def calcul_empilement(nH, nL, nSub, l0, emp_str, l_range, l_step, a_range, a_step, inc, n_inter, substrat_fini, lambda_monitoring):
-    """Calcule la réflectance et la transmittance d'un empilement de couches minces.
-       Adapté pour éviter les dépendances globales et être plus autonome.
-    """
     try:
         emp = [float(e) for e in emp_str.split(',') if e.strip()]
         if not emp:
@@ -37,67 +90,7 @@ def calcul_empilement(nH, nL, nSub, l0, emp_str, l_range, l_step, a_range, a_ste
 
     matrices_stockees = {}
 
-    def calcul_M(pol, l_calc, theta_calc, Ni, ep_couche):
-        """Calcule la matrice de transfert M pour une couche et polarisation données."""
-        alpha = np.sin(theta_calc)
-        sqrt_term_sq = Ni**2 - alpha**2
-        if np.real(sqrt_term_sq) < 0:
-             sqrt_val = 1j * np.sqrt(-sqrt_term_sq)
-        elif abs(np.real(sqrt_term_sq)) < 1e-12 :
-              sqrt_val = 1e-6
-        else:
-             sqrt_val = np.sqrt(sqrt_term_sq)
-
-        if pol == 'p':
-             if abs(sqrt_val) < 1e-9:
-                 eta = np.inf
-             else:
-                  eta = Ni**2 / sqrt_val
-        else:
-             eta = sqrt_val
-
-        phi = (2 * np.pi / l_calc) * sqrt_val * ep_couche
-
-        sin_phi_over_eta = 0j
-        if abs(eta) > 1e-12:
-            sin_phi_over_eta = (1j / eta) * np.sin(phi)
-        elif abs(np.sin(phi)) > 1e-9:
-             sin_phi_over_eta = np.inf + 0j
-
-        M_layer = np.array([[np.cos(phi), sin_phi_over_eta],
-                          [1j * eta * np.sin(phi), np.cos(phi)]], dtype=complex)
-        return M_layer, eta
-
-    def calcul_etats(pol, theta_calc, n_inc, n_sub):
-         """Calcule les admittances optiques pour les milieux incident et substrat."""
-         alpha = np.sin(theta_calc)
-         etainc, etasub = 0j, 0j
-
-         sqrt_term_inc_sq = n_inc**2 - alpha**2
-         if np.real(sqrt_term_inc_sq) < 0 : sqrt_val_inc = 1j * np.sqrt(-sqrt_term_inc_sq)
-         elif abs(np.real(sqrt_term_inc_sq)) < 1e-12: sqrt_val_inc = 1e-6
-         else: sqrt_val_inc = np.sqrt(sqrt_term_inc_sq)
-
-         if pol == 'p':
-              etainc = n_inc**2 / sqrt_val_inc if abs(sqrt_val_inc) > 1e-9 else np.inf
-         else:
-              etainc = sqrt_val_inc
-
-         sqrt_term_sub_sq = n_sub**2 - alpha**2
-         if np.real(sqrt_term_sub_sq) < 0 : sqrt_val_sub = 1j * np.sqrt(-sqrt_term_sub_sq)
-         elif abs(np.real(sqrt_term_sub_sq)) < 1e-12 : sqrt_val_sub = 1e-6
-         else : sqrt_val_sub = np.sqrt(sqrt_term_sub_sq)
-
-         if pol == 'p':
-              etasub = n_sub**2 / sqrt_val_sub if abs(sqrt_val_sub) > 1e-9 else np.inf
-         else:
-              etasub = sqrt_val_sub
-
-         return etainc, etasub
-
-
     def calcul_RT_globale(longueurs_onde, angles, n_inc_medium=1.0):
-        """Calcule R et T pour différentes longueurs d'onde et angles."""
         RT = np.zeros((len(longueurs_onde), len(angles), 4))
 
         for i_l, l_calc in enumerate(longueurs_onde):
@@ -270,7 +263,6 @@ def calcul_empilement(nH, nL, nSub, l0, emp_str, l_range, l_step, a_range, a_ste
 
 
 def plot_spectral(res, params):
-    """Trace le graphique R/T spectral."""
     fig, ax = plt.subplots(figsize=(7, 5))
     l_plt = res['l']
     inc = params['inc']
@@ -294,7 +286,6 @@ def plot_spectral(res, params):
     return fig
 
 def plot_angular(res, params):
-    """Trace le graphique R/T angulaire."""
     fig, ax = plt.subplots(figsize=(7, 5))
     angles_deg = res['inc_a']
     l0_plt = res['l_a'][0]
@@ -318,7 +309,6 @@ def plot_angular(res, params):
     return fig
 
 def plot_index_profile_and_monitoring(res, params, emp):
-    """Trace le profil d'indice réel et la courbe T_monitoring."""
     fig, ax1 = plt.subplots(figsize=(7, 5))
 
     nH_r = np.real(params['nH'])
@@ -391,7 +381,6 @@ def plot_index_profile_and_monitoring(res, params, emp):
     return fig
 
 def plot_stack_bars(res, params, emp):
-    """Trace le schéma de l'empilement en barres."""
     fig, ax = plt.subplots(figsize=(7, max(3, len(emp)*0.4)))
 
     nH_complex = params['nH']
@@ -427,7 +416,6 @@ def plot_stack_bars(res, params, emp):
     return fig
 
 def plot_rs_infini_complexe(res, params, emp):
-    """Trace rs_infini dans le plan complexe pour la longueur d'onde de monitoring."""
     fig, ax = plt.subplots(figsize=(6, 6))
 
     lambda_monitoring = res['lambda_monitoring']
@@ -517,7 +505,6 @@ def plot_rs_infini_complexe(res, params, emp):
     return fig
 
 def create_excel_output(res, params, emp):
-    """Crée le contenu du fichier Excel en mémoire."""
     output = io.BytesIO()
     with pd.ExcelWriter(output, engine='xlsxwriter') as writer:
         params_dict_for_export = params.copy()
@@ -561,11 +548,10 @@ def create_excel_output(res, params, emp):
         workbook = writer.book
         for sheet_name in writer.sheets:
             worksheet = writer.sheets[sheet_name]
-            # Ensure we correctly read back the data to calculate column widths
-            output.seek(0) # Go back to the start before reading
+            output.seek(0)
             try:
                 df_temp = pd.read_excel(output, sheet_name=sheet_name)
-                output.seek(0) # Reset pointer again after read for final save
+                output.seek(0)
                 for i, col in enumerate(df_temp.columns):
                      column_data = df_temp[col].dropna().astype(str)
                      column_len = column_data.map(len).max() if not column_data.empty else 0
@@ -573,7 +559,6 @@ def create_excel_output(res, params, emp):
                      worksheet.set_column(i, i, max_len)
             except Exception as e_width:
                  st.warning(f"Could not auto-adjust width for sheet '{sheet_name}': {e_width}")
-
 
     output.seek(0)
     return output
@@ -675,6 +660,9 @@ if run_calculation:
     if not st.session_state.emp_str.strip():
          st.sidebar.error("L'empilement ne peut pas être vide.")
          valid_input = False
+    if st.session_state.l_step <= 0 or st.session_state.a_step <= 0:
+         st.sidebar.error("Les pas spectraux et angulaires doivent être > 0.")
+         valid_input = False
 
 
     if valid_input:
@@ -763,7 +751,7 @@ if st.session_state.results:
     with tab4:
          st.write(f"Trace le coefficient de réflexion `rs` dans le plan complexe pour λ = {st.session_state.lambda_monitoring} nm et incidence = {st.session_state.inc}°.")
          if st.button("Tracer rs dans le plan complexe"):
-             if emp_list is not None: # Ensure calculation was successful before plotting
+             if emp_list is not None:
                  try:
                       with st.spinner("Génération du tracé complexe..."):
                          st.session_state.fig_complex = plot_rs_infini_complexe(results, params_used, emp_list)
@@ -782,7 +770,7 @@ if st.session_state.results:
     if st.session_state.export_excel:
         st.sidebar.markdown("---")
         st.sidebar.subheader("Export")
-        if emp_list is not None: # Ensure calculation was successful before exporting
+        if emp_list is not None:
             try:
                 with st.spinner("Préparation du fichier Excel..."):
                      excel_data = create_excel_output(results, params_used, emp_list)
@@ -810,4 +798,4 @@ else:
     st.info("Configurez les paramètres dans la barre latérale et cliquez sur 'Lancer le Calcul'.")
 
 st.sidebar.markdown("---")
-st.sidebar.caption("Adaptation Streamlit v1.1")
+st.sidebar.caption("Adaptation Streamlit v1.2")
