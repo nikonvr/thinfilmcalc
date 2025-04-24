@@ -9,7 +9,9 @@ import os
 import datetime
 import io
 from scipy.interpolate import make_interp_spline
+import numba
 
+@numba.jit(nopython=True, cache=True)
 def calcul_M(pol, l_calc, theta_calc, Ni, ep_couche):
     alpha = np.sin(theta_calc)
     sqrt_term_sq = Ni**2 - alpha**2
@@ -22,7 +24,7 @@ def calcul_M(pol, l_calc, theta_calc, Ni, ep_couche):
 
     if pol == 'p':
          if abs(sqrt_val) < 1e-9:
-             eta = np.inf
+             eta = np.inf + 0j
          else:
               eta = Ni**2 / sqrt_val
     else:
@@ -37,9 +39,10 @@ def calcul_M(pol, l_calc, theta_calc, Ni, ep_couche):
          sin_phi_over_eta = np.inf + 0j
 
     M_layer = np.array([[np.cos(phi), sin_phi_over_eta],
-                      [1j * eta * np.sin(phi), np.cos(phi)]], dtype=complex)
+                      [1j * eta * np.sin(phi), np.cos(phi)]], dtype=np.complex128)
     return M_layer, eta
 
+@numba.jit(nopython=True, cache=True)
 def calcul_etats(pol, theta_calc, n_inc, n_sub):
      alpha = np.sin(theta_calc)
      etainc, etasub = 0j, 0j
@@ -49,18 +52,26 @@ def calcul_etats(pol, theta_calc, n_inc, n_sub):
      elif abs(np.real(sqrt_term_inc_sq)) < 1e-12: sqrt_val_inc = 1e-6
      else: sqrt_val_inc = np.sqrt(sqrt_term_inc_sq)
 
+     n_sub_complex = np.complex128(n_sub)
+
      if pol == 'p':
-          etainc = n_inc**2 / sqrt_val_inc if abs(sqrt_val_inc) > 1e-9 else np.inf
+          if abs(sqrt_val_inc) < 1e-9:
+              etainc = np.inf + 0j
+          else:
+              etainc = n_inc**2 / sqrt_val_inc
      else:
           etainc = sqrt_val_inc
 
-     sqrt_term_sub_sq = n_sub**2 - alpha**2
+     sqrt_term_sub_sq = n_sub_complex**2 - alpha**2
      if np.real(sqrt_term_sub_sq) < 0 : sqrt_val_sub = 1j * np.sqrt(-sqrt_term_sub_sq)
-     elif abs(np.real(sqrt_term_sub_sq)) < 1e-12 : sqrt_val_sub = 1e-6
+     elif abs(np.real(sqrt_term_sub_sq)) < 1e-12 : sqrt_val_sub = 1e-6 + 0j
      else : sqrt_val_sub = np.sqrt(sqrt_term_sub_sq)
 
      if pol == 'p':
-          etasub = n_sub**2 / sqrt_val_sub if abs(sqrt_val_sub) > 1e-9 else np.inf
+          if abs(sqrt_val_sub) < 1e-9:
+              etasub = np.inf + 0j
+          else:
+              etasub = n_sub_complex**2 / sqrt_val_sub
      else:
           etasub = sqrt_val_sub
 
@@ -506,59 +517,72 @@ def plot_rs_infini_complexe(res, params, emp):
 
 def create_excel_output(res, params, emp):
     output = io.BytesIO()
+    dfs = {}
+
     with pd.ExcelWriter(output, engine='xlsxwriter') as writer:
         params_dict_for_export = params.copy()
         params_dict_for_export['nH'] = f"{np.real(params['nH']):.4f}{np.imag(params['nH']):+.4f}j"
         params_dict_for_export['nL'] = f"{np.real(params['nL']):.4f}{np.imag(params['nL']):+.4f}j"
-        params_df = pd.DataFrame.from_dict(params_dict_for_export, orient='index', columns=['Valeur'])
-        params_df.loc['Empilement String'] = params['emp_str']
-        params_df.to_excel(writer, sheet_name='Paramètres')
+        dfs['Paramètres'] = pd.DataFrame.from_dict(params_dict_for_export, orient='index', columns=['Valeur'])
+        dfs['Paramètres'].loc['Empilement String'] = params['emp_str']
+        dfs['Paramètres'].to_excel(writer, sheet_name='Paramètres')
 
-        spectral_data = pd.DataFrame({
+        dfs['Données Spectrales'] = pd.DataFrame({
             'Longueur d\'onde (nm)': res['l'],
             'Rs': res['Rs_s'], 'Rp': res['Rp_s'],
             'Ts': res['Ts_s'], 'Tp': res['Tp_s']
         })
-        spectral_data.to_excel(writer, sheet_name='Données Spectrales', index=False)
+        dfs['Données Spectrales'].to_excel(writer, sheet_name='Données Spectrales', index=False)
 
-        angular_data = pd.DataFrame({
+        dfs['Données Angulaires'] = pd.DataFrame({
             'Angle (°)': res['inc_a'],
             'Rs': res['Rs_a'], 'Rp': res['Rp_a'],
             'Ts': res['Ts_a'], 'Tp': res['Tp_a']
         })
-        angular_data.to_excel(writer, sheet_name='Données Angulaires', index=False)
+        dfs['Données Angulaires'].to_excel(writer, sheet_name='Données Angulaires', index=False)
 
         x_monitoring_all = np.concatenate((res['epaisseurs_interfaces'], res['epaisseurs_intermediaires']))
         y_monitoring_all = np.concatenate((res['transmissions_interfaces'], res['transmissions_intermediaires']))
         sorted_indices = np.argsort(x_monitoring_all)
-        monitoring_data = pd.DataFrame({
+        dfs['Monitoring T'] = pd.DataFrame({
             f'Epaisseur cumulée (nm) @ {res["lambda_monitoring"]:.0f}nm': x_monitoring_all[sorted_indices],
             f'Transmission @ {res["lambda_monitoring"]:.0f}nm': y_monitoring_all[sorted_indices]
         })
-        monitoring_data.to_excel(writer, sheet_name='Monitoring T', index=False)
+        dfs['Monitoring T'].to_excel(writer, sheet_name='Monitoring T', index=False)
 
-        layer_info = pd.DataFrame({
+        dfs['Couches Details'] = pd.DataFrame({
              'Couche #': [i + 1 for i in range(len(emp))],
              'Type': ['H' if i % 2 == 0 else 'L' for i in range(len(emp))],
              'Indice Complexe': [f"{np.real(params['nH']):.4f}{np.imag(params['nH']):+.4f}j" if i % 2 == 0 else f"{np.real(params['nL']):.4f}{np.imag(params['nL']):+.4f}j" for i in range(len(emp))],
              'Epaisseur (nm)': res['ep_layers']
         })
-        layer_info.to_excel(writer, sheet_name='Couches Details', index=False)
+        dfs['Couches Details'].to_excel(writer, sheet_name='Couches Details', index=False)
 
         workbook = writer.book
-        for sheet_name in writer.sheets:
+        for sheet_name, df_current in dfs.items():
             worksheet = writer.sheets[sheet_name]
-            output.seek(0)
-            try:
-                df_temp = pd.read_excel(output, sheet_name=sheet_name)
-                output.seek(0)
-                for i, col in enumerate(df_temp.columns):
-                     column_data = df_temp[col].dropna().astype(str)
-                     column_len = column_data.map(len).max() if not column_data.empty else 0
-                     max_len = max(column_len if pd.notna(column_len) else 0, len(str(col))) + 2
-                     worksheet.set_column(i, i, max_len)
-            except Exception as e_width:
-                 st.warning(f"Could not auto-adjust width for sheet '{sheet_name}': {e_width}")
+            is_params_sheet = (sheet_name == 'Paramètres')
+
+            for i, col in enumerate(df_current.columns):
+                if is_params_sheet and i == 0:
+                     idx_len = df_current.index.astype(str).map(len).max()
+                     col_len = df_current[col].astype(str).map(len).max()
+                     header_len = max(len(str(col)), len(df_current.index.name) if df_current.index.name else 0)
+                     data_len = max(idx_len if pd.notna(idx_len) else 0, col_len if pd.notna(col_len) else 0)
+                else:
+                    col_len = df_current[col].astype(str).map(len).max()
+                    header_len = len(str(col))
+                    data_len = col_len if pd.notna(col_len) else 0
+
+                max_len = max(data_len, header_len) + 2
+                col_idx_to_set = i + 1 if is_params_sheet else i
+                worksheet.set_column(col_idx_to_set, col_idx_to_set, max_len)
+
+            if is_params_sheet:
+                 idx_name_len = len(df_current.index.name) if df_current.index.name else 0
+                 idx_value_len = df_current.index.astype(str).map(len).max()
+                 idx_width = max(idx_name_len, idx_value_len if pd.notna(idx_value_len) else 0) + 2
+                 worksheet.set_column(0, 0, idx_width)
 
     output.seek(0)
     return output
@@ -798,4 +822,4 @@ else:
     st.info("Configurez les paramètres dans la barre latérale et cliquez sur 'Lancer le Calcul'.")
 
 st.sidebar.markdown("---")
-st.sidebar.caption("Adaptation Streamlit v1.2")
+st.sidebar.caption("Adaptation Streamlit v1.3")
