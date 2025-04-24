@@ -100,7 +100,7 @@ def calcul_empilement(nH, nL, nSub, l0, emp_str, l_range, l_step, a_range, a_ste
         """Calcule R et T pour différentes longueurs d'onde et angles."""
         RT = np.zeros((len(longueurs_onde), len(angles), 4))
 
-        for i_l, l in enumerate(longueurs_onde):
+        for i_l, l_calc in enumerate(longueurs_onde):
             for i_a, theta in enumerate(angles):
                 alpha = np.sin(theta)
                 M_total_s = np.eye(2, dtype=complex)
@@ -108,15 +108,15 @@ def calcul_empilement(nH, nL, nSub, l0, emp_str, l_range, l_step, a_range, a_ste
 
                 for i, e_ep in enumerate(ep):
                     Ni = nH if i % 2 == 0 else nL
-                    key_s = (i, l, theta, 's')
+                    key_s = (i, l_calc, theta, 's')
                     if key_s not in matrices_stockees:
-                        matrices_stockees[key_s], _ = calcul_M('s', l, theta, Ni, e_ep)
+                        matrices_stockees[key_s], _ = calcul_M('s', l_calc, theta, Ni, e_ep)
                     M_layer_s = matrices_stockees[key_s]
                     M_total_s = M_layer_s @ M_total_s
 
-                    key_p = (i, l, theta, 'p')
+                    key_p = (i, l_calc, theta, 'p')
                     if key_p not in matrices_stockees:
-                         matrices_stockees[key_p], _ = calcul_M('p', l, theta, Ni, e_ep)
+                         matrices_stockees[key_p], _ = calcul_M('p', l_calc, theta, Ni, e_ep)
                     M_layer_p = matrices_stockees[key_p]
                     M_total_p = M_layer_p @ M_total_p
 
@@ -272,13 +272,13 @@ def calcul_empilement(nH, nL, nSub, l0, emp_str, l_range, l_step, a_range, a_ste
 def plot_spectral(res, params):
     """Trace le graphique R/T spectral."""
     fig, ax = plt.subplots(figsize=(7, 5))
-    l = res['l']
+    l_plt = res['l']
     inc = params['inc']
 
-    ax.plot(l, res['Rs_s'], label='Rs', linestyle='-', color='blue')
-    ax.plot(l, res['Rp_s'], label='Rp', linestyle='--', color='cyan')
-    ax.plot(l, res['Ts_s'], label='Ts', linestyle='-', color='red')
-    ax.plot(l, res['Tp_s'], label='Tp', linestyle='--', color='orange')
+    ax.plot(l_plt, res['Rs_s'], label='Rs', linestyle='-', color='blue')
+    ax.plot(l_plt, res['Rp_s'], label='Rp', linestyle='--', color='cyan')
+    ax.plot(l_plt, res['Ts_s'], label='Ts', linestyle='-', color='red')
+    ax.plot(l_plt, res['Tp_s'], label='Tp', linestyle='--', color='orange')
 
     ax.set_xlabel("Longueur d'onde (nm)")
     ax.set_ylabel('Reflectance / Transmittance')
@@ -287,8 +287,8 @@ def plot_spectral(res, params):
     ax.grid(which='minor', color='lightgrey', linestyle=':', linewidth=0.5)
     ax.minorticks_on()
     ax.set_ylim(bottom=-0.05, top=1.05)
-    if len(l) > 1:
-        ax.set_xlim(l[0], l[-1])
+    if len(l_plt) > 1:
+        ax.set_xlim(l_plt[0], l_plt[-1])
     ax.legend()
     plt.tight_layout()
     return fig
@@ -297,7 +297,7 @@ def plot_angular(res, params):
     """Trace le graphique R/T angulaire."""
     fig, ax = plt.subplots(figsize=(7, 5))
     angles_deg = res['inc_a']
-    l0 = res['l_a'][0]
+    l0_plt = res['l_a'][0]
 
     ax.plot(angles_deg, res['Rs_a'], label='Rs', linestyle='-', color='blue')
     ax.plot(angles_deg, res['Rp_a'], label='Rp', linestyle='--', color='cyan')
@@ -306,7 +306,7 @@ def plot_angular(res, params):
 
     ax.set_xlabel("Angle d'incidence (degrés)")
     ax.set_ylabel('Reflectance / Transmittance')
-    ax.set_title(f"Tracé angulaire (λ = {l0:.0f} nm)")
+    ax.set_title(f"Tracé angulaire (λ = {l0_plt:.0f} nm)")
     ax.grid(which='major', color='grey', linestyle='-', linewidth=0.7)
     ax.grid(which='minor', color='lightgrey', linestyle=':', linewidth=0.5)
     ax.minorticks_on()
@@ -331,10 +331,9 @@ def plot_index_profile_and_monitoring(res, params, emp):
     indices_reels = [nH_r if i % 2 == 0 else nL_r for i in range(len(emp))]
     ep_cum = np.cumsum(ep_layers)
 
-    x_coords_indice = np.concatenate(([-50, 0], np.repeat(ep_cum, 2)))
-    x_coords_indice = np.concatenate((x_coords_indice[:-1], [ep_cum[-1] + 1, ep_cum[-1] + 51]))
-
-    y_coords_indice = np.concatenate(([nSub], [nSub], np.repeat(indices_reels, 2), [1, 1]))
+    last_ep_cum = ep_cum[-1] if len(ep_cum) > 0 else 0
+    x_coords_indice = np.concatenate(([-50, 0], ep_cum, [last_ep_cum + 51]))
+    y_coords_indice = np.concatenate(([nSub, nSub], indices_reels, [1]))
 
     ax1.plot(x_coords_indice, y_coords_indice, drawstyle='steps-post', label='n réel', color='green')
     ax1.set_xlabel('Epaisseur cumulée (nm)')
@@ -350,7 +349,7 @@ def plot_index_profile_and_monitoring(res, params, emp):
     ax1.set_ylim(min_n - 0.1, max_n + 0.1)
 
     ax1.text(-25, (ax1.get_ylim()[0] + ax1.get_ylim()[1])/2 , "SUBSTRAT", ha='center', va='center', fontsize=8, rotation=90, color='gray')
-    ax1.text(ep_cum[-1] + 25, (ax1.get_ylim()[0] + ax1.get_ylim()[1])/2, "AIR", ha='center', va='center', fontsize=8, rotation=90, color='gray')
+    ax1.text(last_ep_cum + 25, (ax1.get_ylim()[0] + ax1.get_ylim()[1])/2, "AIR", ha='center', va='center', fontsize=8, rotation=90, color='gray')
 
     ax2 = ax1.twinx()
     ax2.set_ylabel(f'T Monitoring (λ = {lambda_monitoring:.0f} nm)', color='red')
@@ -364,7 +363,7 @@ def plot_index_profile_and_monitoring(res, params, emp):
     y_monitoring_sorted = y_monitoring_all[sorted_indices]
 
     x_smooth_start = -50
-    x_smooth_end = ep_cum[-1] + 50 if len(ep_cum) > 0 else 50
+    x_smooth_end = last_ep_cum + 50
     x_monitoring_extended = np.concatenate(([x_smooth_start], x_monitoring_sorted, [x_smooth_end]))
     y_monitoring_extended = np.concatenate(([y_monitoring_sorted[0] if len(y_monitoring_sorted)>0 else 0], y_monitoring_sorted, [y_monitoring_sorted[-1] if len(y_monitoring_sorted)>0 else 0]))
 
@@ -562,13 +561,18 @@ def create_excel_output(res, params, emp):
         workbook = writer.book
         for sheet_name in writer.sheets:
             worksheet = writer.sheets[sheet_name]
-            df_temp = pd.read_excel(output, sheet_name=sheet_name) # Read back to get data for width calc
-            output.seek(0) # Reset pointer after read
-            for i, col in enumerate(df_temp.columns):
-                 column_data = df_temp[col].dropna().astype(str)
-                 column_len = column_data.map(len).max() if not column_data.empty else 0
-                 max_len = max(column_len if pd.notna(column_len) else 0, len(str(col))) + 2
-                 worksheet.set_column(i, i, max_len)
+            # Ensure we correctly read back the data to calculate column widths
+            output.seek(0) # Go back to the start before reading
+            try:
+                df_temp = pd.read_excel(output, sheet_name=sheet_name)
+                output.seek(0) # Reset pointer again after read for final save
+                for i, col in enumerate(df_temp.columns):
+                     column_data = df_temp[col].dropna().astype(str)
+                     column_len = column_data.map(len).max() if not column_data.empty else 0
+                     max_len = max(column_len if pd.notna(column_len) else 0, len(str(col))) + 2
+                     worksheet.set_column(i, i, max_len)
+            except Exception as e_width:
+                 st.warning(f"Could not auto-adjust width for sheet '{sheet_name}': {e_width}")
 
 
     output.seek(0)
@@ -759,38 +763,46 @@ if st.session_state.results:
     with tab4:
          st.write(f"Trace le coefficient de réflexion `rs` dans le plan complexe pour λ = {st.session_state.lambda_monitoring} nm et incidence = {st.session_state.inc}°.")
          if st.button("Tracer rs dans le plan complexe"):
-             try:
-                  with st.spinner("Génération du tracé complexe..."):
-                     st.session_state.fig_complex = plot_rs_infini_complexe(results, params_used, emp_list)
-                     st.pyplot(st.session_state.fig_complex)
-             except Exception as e_complex:
-                  st.error(f"Erreur lors du tracé complexe : {e_complex}")
+             if emp_list is not None: # Ensure calculation was successful before plotting
+                 try:
+                      with st.spinner("Génération du tracé complexe..."):
+                         st.session_state.fig_complex = plot_rs_infini_complexe(results, params_used, emp_list)
+                         st.pyplot(st.session_state.fig_complex)
+                 except Exception as e_complex:
+                      st.error(f"Erreur lors du tracé complexe : {e_complex}")
+             else:
+                 st.warning("Veuillez d'abord lancer un calcul réussi.")
+
          elif st.session_state.fig_complex:
                st.pyplot(st.session_state.fig_complex)
          else:
-               st.info("Cliquez sur le bouton pour générer le graphique.")
+               st.info("Cliquez sur le bouton pour générer le graphique (après un calcul réussi).")
 
 
     if st.session_state.export_excel:
         st.sidebar.markdown("---")
         st.sidebar.subheader("Export")
-        try:
-            with st.spinner("Préparation du fichier Excel..."):
-                 excel_data = create_excel_output(results, params_used, emp_list)
-                 num_layers_export = len(emp_list) if emp_list else 0
-                 now = datetime.datetime.now()
-                 timestamp = now.strftime("%Y%m%d-%H%M%S")
-                 excel_filename = f"Resultats_empilement_{num_layers_export}_couches_{timestamp}.xlsx"
+        if emp_list is not None: # Ensure calculation was successful before exporting
+            try:
+                with st.spinner("Préparation du fichier Excel..."):
+                     excel_data = create_excel_output(results, params_used, emp_list)
+                     num_layers_export = len(emp_list) if emp_list else 0
+                     now = datetime.datetime.now()
+                     timestamp = now.strftime("%Y%m%d-%H%M%S")
+                     excel_filename = f"Resultats_empilement_{num_layers_export}_couches_{timestamp}.xlsx"
 
-                 st.sidebar.download_button(
-                     label="📥 Télécharger les Résultats (Excel)",
-                     data=excel_data,
-                     file_name=excel_filename,
-                     mime="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
-                     use_container_width=True
-                 )
-        except Exception as e_excel:
-            st.sidebar.error(f"Erreur lors de la création du fichier Excel: {e_excel}")
+                     st.sidebar.download_button(
+                         label="📥 Télécharger les Résultats (Excel)",
+                         data=excel_data,
+                         file_name=excel_filename,
+                         mime="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
+                         use_container_width=True
+                     )
+            except Exception as e_excel:
+                st.sidebar.error(f"Erreur lors de la création du fichier Excel: {e_excel}")
+        else:
+             st.sidebar.warning("Veuillez d'abord lancer un calcul réussi pour exporter.")
+
 
 elif run_calculation:
      st.warning("Le calcul n'a pas pu aboutir. Vérifiez les paramètres et les messages d'erreur.")
@@ -798,4 +810,4 @@ else:
     st.info("Configurez les paramètres dans la barre latérale et cliquez sur 'Lancer le Calcul'.")
 
 st.sidebar.markdown("---")
-st.sidebar.caption("Adaptation Streamlit v1.0")
+st.sidebar.caption("Adaptation Streamlit v1.1")
