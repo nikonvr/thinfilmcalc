@@ -1,5 +1,4 @@
 # -*- coding: utf-8 -*-
-# (Imports remain the same)
 import streamlit as st
 import numpy as np
 import matplotlib
@@ -13,10 +12,8 @@ from scipy.interpolate import make_interp_spline
 import numba
 import traceback
 
-# --- Numba JIT functions ---
 @numba.jit(nopython=True, cache=True)
 def calculate_transfer_matrix(polarization, wavelength, incidence_rad, n_layer, layer_thickness):
-    # ... (code from previous answer) ...
     alpha = np.sin(incidence_rad)
     n_layer_complex = np.complex128(n_layer)
     sqrt_term_sq = n_layer_complex**2 - alpha**2
@@ -47,7 +44,6 @@ def calculate_transfer_matrix(polarization, wavelength, incidence_rad, n_layer, 
 
 @numba.jit(nopython=True, cache=True)
 def calculate_admittances(polarization, incidence_rad, n_inc, n_sub):
-    # ... (code from previous answer) ...
      alpha = np.sin(incidence_rad)
      n_inc_complex = np.complex128(n_inc)
      n_sub_complex = np.complex128(n_sub)
@@ -76,9 +72,7 @@ def calculate_admittances(polarization, incidence_rad, n_inc, n_sub):
           eta_sub = sqrt_val_sub
      return eta_inc, eta_sub
 
-# --- Non-JIT Calculation Functions ---
 def calculate_global_RT(wavelengths, angles_rad, nH, nL, nSub, physical_thicknesses, finite_substrate, incident_medium_index=1.0):
-    # ... (code from previous answer) ...
     RT = np.zeros((len(wavelengths), len(angles_rad), 4))
     matrix_cache = {}
     for i_wl, wl in enumerate(wavelengths):
@@ -182,7 +176,7 @@ def calculate_stack_properties(nH, nL, nSub, l0, stack_string, wl_range, wl_step
     if abs(np.real(eta_inc_s_bare)) > 1e-12:
         Ts_bare_inf = np.real(eta_sub_s_bare) / np.real(eta_inc_s_bare) * np.abs(ts_bare)**2
 
-    Rb_s_mon = 0.0 # Default for infinite substrate
+    Rb_s_mon = 0.0
     if finite_substrate:
          eta_inc_rev_s_bare, eta_sub_rev_s_bare = calculate_admittances('s', monitoring_angle_rad, nSub, incident_medium_index)
          denom_bs_bare = eta_inc_rev_s_bare + eta_sub_rev_s_bare
@@ -190,7 +184,7 @@ def calculate_stack_properties(nH, nL, nSub, l0, stack_string, wl_range, wl_step
          Rs_bare_inf = np.abs((eta_inc_s_bare - eta_sub_s_bare) / denom_s_bare)**2 if abs(denom_s_bare) > 1e-12 else 1.0
          denom_T_bare_corr = 1 - Rs_bare_inf * Rb_s_bare
          T_substrate_bare = (Ts_bare_inf * (1 - Rb_s_bare) / denom_T_bare_corr) if abs(denom_T_bare_corr) > 1e-12 else Ts_bare_inf * (1 - Rb_s_bare)
-         Rb_s_mon = Rb_s_bare # Use the same back reflectance for monitoring
+         Rb_s_mon = Rb_s_bare
     else:
          T_substrate_bare = Ts_bare_inf
 
@@ -202,7 +196,7 @@ def calculate_stack_properties(nH, nL, nSub, l0, stack_string, wl_range, wl_step
 
     for i_layer, layer_thickness in enumerate(physical_thicknesses):
         Ni = nH if i_layer % 2 == 0 else nL
-        M_before_layer = M_cumulative_s.copy() # Matrix up to the start of this layer
+        M_before_layer = M_cumulative_s.copy()
 
         for k in range(1, points_per_layer + 1):
              partial_thickness = layer_thickness * k / (points_per_layer + 1)
@@ -227,8 +221,8 @@ def calculate_stack_properties(nH, nL, nSub, l0, stack_string, wl_range, wl_step
              thicknesses_intermediate.append(current_cumulative_thickness + partial_thickness)
 
         M_layer_s, _ = calculate_transfer_matrix('s', monitoring_wavelength, monitoring_angle_rad, Ni, layer_thickness)
-        M_cumulative_s = M_layer_s @ M_before_layer # Update cumulative matrix *after* using the previous one
-
+        M_cumulative_s = M_layer_s @ M_before_layer
+        
         denom_s = (eta_inc_s_mon * M_cumulative_s[0, 0] + eta_sub_s_mon * M_cumulative_s[1, 1] + eta_inc_s_mon * eta_sub_s_mon * M_cumulative_s[0, 1] + M_cumulative_s[1, 0])
         ts_inf = 2 * eta_inc_s_mon / denom_s if abs(denom_s) > 1e-12 else 0.0
         Ts_inf = 0.0
@@ -352,9 +346,14 @@ def plot_index_and_monitoring(res, params, layer_multipliers):
 
     thicknesses_all_monitoring = np.concatenate((res['thicknesses_interfaces'], res['thicknesses_intermediate']))
     transmissions_all_monitoring = np.concatenate((res['transmissions_interfaces'], res['transmissions_intermediate']))
-    sorted_indices = np.argsort(thicknesses_all_monitoring)
-    thicknesses_sorted = thicknesses_all_monitoring[sorted_indices]
-    transmissions_sorted = transmissions_all_monitoring[sorted_indices]
+
+    if len(thicknesses_all_monitoring) > 0:
+        sorted_indices = np.argsort(thicknesses_all_monitoring)
+        thicknesses_sorted = thicknesses_all_monitoring[sorted_indices]
+        transmissions_sorted = transmissions_all_monitoring[sorted_indices]
+    else:
+        thicknesses_sorted = np.array([0])
+        transmissions_sorted = np.array([0])
 
     x_smooth_start = -50
     x_smooth_end = last_cumulative_thickness + 50
@@ -362,32 +361,43 @@ def plot_index_and_monitoring(res, params, layer_multipliers):
     ax2.plot(thicknesses_sorted, transmissions_sorted, 'ro', markersize=3, label='Calculated points')
 
     if len(thicknesses_sorted) > 3 and last_cumulative_thickness > 0:
-        num_smooth_points = max(100, len(thicknesses_sorted) * 5)
-        thickness_coords_smooth = np.linspace(0, last_cumulative_thickness, num_smooth_points)
-        try:
-             spl = make_interp_spline(thicknesses_sorted, transmissions_sorted, k=3, bc_type='natural')
-             transmissions_coords_smooth = spl(thickness_coords_smooth)
-             transmissions_coords_smooth = np.clip(transmissions_coords_smooth, 0, 1)
-             ax2.plot(thickness_coords_smooth, transmissions_coords_smooth, 'r-', linewidth=1.5, label=f'T @ {monitoring_wavelength:.0f} nm (smoothed)')
-        except Exception as e_spline:
-             st.warning(f"Could not generate monitoring spline: {e_spline}. Plotting linear segments.")
+        valid_spline_indices = np.where(thicknesses_sorted >= 0)[0]
+        if len(valid_spline_indices) > 3:
+            thickness_spline_in = thicknesses_sorted[valid_spline_indices]
+            trans_spline_in = transmissions_sorted[valid_spline_indices]
+            unique_indices = np.unique(thickness_spline_in, return_index=True)[1]
+            thickness_spline_in = thickness_spline_in[np.sort(unique_indices)]
+            trans_spline_in = trans_spline_in[np.sort(unique_indices)]
+
+            if len(thickness_spline_in) > 3:
+                num_smooth_points = max(100, len(thickness_spline_in) * 5)
+                thickness_coords_smooth = np.linspace(0, last_cumulative_thickness, num_smooth_points)
+                try:
+                     spl = make_interp_spline(thickness_spline_in, trans_spline_in, k=3, bc_type='natural')
+                     transmissions_coords_smooth = spl(thickness_coords_smooth)
+                     transmissions_coords_smooth = np.clip(transmissions_coords_smooth, 0, 1)
+                     ax2.plot(thickness_coords_smooth, transmissions_coords_smooth, 'r-', linewidth=1.5, label=f'T @ {monitoring_wavelength:.0f} nm (smoothed)')
+                except Exception as e_spline:
+                     st.warning(f"Spline failed: {e_spline}. Plotting linear.")
+                     ax2.plot(thicknesses_sorted[valid_spline_indices], transmissions_sorted[valid_spline_indices], 'r-', linewidth=1.0, label=f'T @ {monitoring_wavelength:.0f} nm (linear)')
+            else:
+                 ax2.plot(thicknesses_sorted, transmissions_sorted, 'r-', linewidth=1.0, label=f'T @ {monitoring_wavelength:.0f} nm (linear)')
+        else:
              ax2.plot(thicknesses_sorted, transmissions_sorted, 'r-', linewidth=1.0, label=f'T @ {monitoring_wavelength:.0f} nm (linear)')
-    else:
+    elif len(thicknesses_sorted) > 0:
          ax2.plot(thicknesses_sorted, transmissions_sorted, 'r-', linewidth=1.0, label=f'T @ {monitoring_wavelength:.0f} nm (linear)')
 
     if len(transmissions_sorted) > 0:
         t_start = transmissions_sorted[0]
         t_end = transmissions_sorted[-1]
-        ax2.plot([x_smooth_start, 0], [t_start, t_start], 'r:', linewidth=1.0, label='_nolegend_')
-        ax2.plot([last_cumulative_thickness, x_smooth_end], [t_end, t_end], 'r:', linewidth=1.0, label='_nolegend_')
-
+        ax2.plot([x_smooth_start, 0], [t_start, t_start], 'r-', linewidth=1.0, alpha=0.7, label='_nolegend_')
+        ax2.plot([last_cumulative_thickness, x_smooth_end], [t_end, t_end], 'r-', linewidth=1.0, alpha=0.7, label='_nolegend_')
 
     ax1.set_xlim(x_smooth_start, x_smooth_end)
     ax2.legend(loc='upper right')
     ax1.legend(loc='upper left')
     plt.tight_layout()
     return fig
-
 
 def plot_stack_structure(res, params, layer_multipliers):
     fig, ax = plt.subplots(figsize=(7, max(3, len(layer_multipliers)*0.4)))
@@ -671,7 +681,7 @@ This application calculates the theoretical reflectance (R) and transmittance (T
         * Shows R and T vs. Incidence Angle (at the QWOT center wavelength) for S and P polarizations.
    * **🔬 Profile & Monitoring:**
         * Shows the refractive index profile (real part 'n') as a function of cumulative physical thickness from the substrate.
-        * Shows the calculated Transmission vs. cumulative physical thickness at the specified 'Monitoring λ'. Includes calculated points and an optional smoothed spline curve.
+        * Shows the calculated Transmission vs. cumulative physical thickness at the specified 'Monitoring λ'. Includes calculated points and an optional smoothed spline curve. The curve is held constant before thickness=0 and after the final thickness.
    * **🏗️ Stack Structure:**
         * Displays a bar chart visualizing the stack layer sequence (Layer 1 is at the bottom, near the substrate), material type (H/L based color), physical thickness (nm), and complex refractive index for each layer.
    * **🌀 Complex rs Plane:**
@@ -908,4 +918,4 @@ else:
     st.info("Configure parameters in the sidebar and click 'Run Calculation'.")
 
 st.sidebar.markdown("---")
-st.sidebar.caption("Thin Film Calculator v1.5-en")
+st.sidebar.caption("Thin Film Calculator v1.6-en")
