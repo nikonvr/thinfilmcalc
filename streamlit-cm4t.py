@@ -2,69 +2,58 @@
 import streamlit as st
 import numpy as np
 import matplotlib
-matplotlib.use('Agg') # Use non-interactive backend for Streamlit compatibility
+matplotlib.use('Agg')
 import matplotlib.pyplot as plt
 import pandas as pd
 import os
 import datetime
 import io
 from scipy.interpolate import make_interp_spline
-import numba # For performance optimization
-import traceback # For detailed error logging
-
-# --- Core Physics Calculation Functions ---
+import numba
+import traceback
 
 @numba.jit(nopython=True, cache=True)
 def calculate_transfer_matrix(polarization, wavelength, incidence_rad, n_layer, layer_thickness):
-    """Calculates the transfer matrix M for a single layer and polarization."""
     alpha = np.sin(incidence_rad)
-    n_layer_complex = np.complex128(n_layer) # Ensure complex type for Numba
+    n_layer_complex = np.complex128(n_layer)
     sqrt_term_sq = n_layer_complex**2 - alpha**2
 
-    # Handle evanescent waves and critical angle carefully
-    if np.real(sqrt_term_sq) < -1e-12: # Allow small negative due to precision
+    if np.real(sqrt_term_sq) < -1e-12:
          sqrt_val = 1j * np.sqrt(-sqrt_term_sq)
-    elif abs(np.real(sqrt_term_sq)) < 1e-12 and abs(np.imag(sqrt_term_sq)) < 1e-12: # Near zero (critical angle?)
-          sqrt_val = 1e-6 + 0j # Small complex number to avoid division by zero / NaN
+    elif abs(np.real(sqrt_term_sq)) < 1e-12 and abs(np.imag(sqrt_term_sq)) < 1e-12:
+          sqrt_val = 1e-6 + 0j
     else:
-         # Use complex sqrt for generality (handles absorption correctly)
          sqrt_val = np.sqrt(sqrt_term_sq)
 
-    # Calculate optical admittance (eta)
-    if polarization == 'p': # Use integer/bool check if Numba complains about string comparison
+    if polarization == 'p':
          if abs(sqrt_val) < 1e-9:
-             eta = np.inf + 0j # Avoid division by zero
+             eta = np.inf + 0j
          else:
               eta = n_layer_complex**2 / sqrt_val
-    else: # polarization == 's'
+    else:
          eta = sqrt_val
 
-    # Calculate phase thickness (phi)
     phi = (2 * np.pi / wavelength) * sqrt_val * layer_thickness
 
-    # Calculate matrix elements, handling potential division by zero in sin(phi)/eta
     cos_phi = np.cos(phi)
     sin_phi = np.sin(phi)
     sin_phi_over_eta = 0j
     if abs(eta) > 1e-12:
         sin_phi_over_eta = (1j / eta) * sin_phi
-    elif abs(sin_phi) > 1e-9: # eta is zero but sin(phi) is not -> divergence
-         sin_phi_over_eta = np.inf + 0j # Or a very large complex number
+    elif abs(sin_phi) > 1e-9:
+         sin_phi_over_eta = np.inf + 0j
 
-    # Construct the matrix (ensure complex128 for Numba)
     m_layer = np.array([[cos_phi, sin_phi_over_eta],
                        [1j * eta * sin_phi, cos_phi]], dtype=np.complex128)
-    return m_layer, eta # Returning eta might be useful for debugging
+    return m_layer, eta
 
 @numba.jit(nopython=True, cache=True)
 def calculate_admittances(polarization, incidence_rad, n_inc, n_sub):
-     """Calculates the optical admittances for incident and substrate media."""
      alpha = np.sin(incidence_rad)
      n_inc_complex = np.complex128(n_inc)
      n_sub_complex = np.complex128(n_sub)
      eta_inc, eta_sub = 0j, 0j
 
-     # Incident medium (usually air, n_inc=1)
      sqrt_term_inc_sq = n_inc_complex**2 - alpha**2
      if np.real(sqrt_term_inc_sq) < -1e-12 : sqrt_val_inc = 1j * np.sqrt(-sqrt_term_inc_sq)
      elif abs(np.real(sqrt_term_inc_sq)) < 1e-12 and abs(np.imag(sqrt_term_inc_sq)) < 1e-12: sqrt_val_inc = 1e-6 + 0j
@@ -75,10 +64,9 @@ def calculate_admittances(polarization, incidence_rad, n_inc, n_sub):
               eta_inc = np.inf + 0j
           else:
               eta_inc = n_inc_complex**2 / sqrt_val_inc
-     else: # polarization == 's'
+     else:
           eta_inc = sqrt_val_inc
 
-     # Substrate medium
      sqrt_term_sub_sq = n_sub_complex**2 - alpha**2
      if np.real(sqrt_term_sub_sq) < -1e-12 : sqrt_val_sub = 1j * np.sqrt(-sqrt_term_sub_sq)
      elif abs(np.real(sqrt_term_sub_sq)) < 1e-12 and abs(np.imag(sqrt_term_sub_sq)) < 1e-12 : sqrt_val_sub = 1e-6 + 0j
@@ -89,16 +77,14 @@ def calculate_admittances(polarization, incidence_rad, n_inc, n_sub):
               eta_sub = np.inf + 0j
           else:
               eta_sub = n_sub_complex**2 / sqrt_val_sub
-     else: # polarization == 's'
+     else:
           eta_sub = sqrt_val_sub
 
      return eta_inc, eta_sub
 
-# This function is kept separate as it uses a dictionary cache, unsuitable for Numba nopython mode
 def calculate_global_RT(wavelengths, angles_rad, nH, nL, nSub, physical_thicknesses, finite_substrate, incident_medium_index=1.0):
-    """Calculates Reflectance and Transmittance for various wavelengths and angles."""
-    RT = np.zeros((len(wavelengths), len(angles_rad), 4)) # Rs, Rp, Ts, Tp
-    matrix_cache = {} # Simple cache for layer matrices
+    RT = np.zeros((len(wavelengths), len(angles_rad), 4))
+    matrix_cache = {}
 
     for i_wl, wl in enumerate(wavelengths):
         for i_ang, ang_rad in enumerate(angles_rad):
@@ -106,45 +92,37 @@ def calculate_global_RT(wavelengths, angles_rad, nH, nL, nSub, physical_thicknes
             M_total_p = np.eye(2, dtype=np.complex128)
 
             for i_layer, thickness in enumerate(physical_thicknesses):
-                Ni = nH if i_layer % 2 == 0 else nL # Alternating H/L based on index
-
-                # Calculate or retrieve layer matrix for S-polarization
+                Ni = nH if i_layer % 2 == 0 else nL
                 key_s = (i_layer, wl, ang_rad, 's')
                 if key_s not in matrix_cache:
                     matrix_cache[key_s], _ = calculate_transfer_matrix('s', wl, ang_rad, Ni, thickness)
                 M_layer_s = matrix_cache[key_s]
                 M_total_s = M_layer_s @ M_total_s
 
-                # Calculate or retrieve layer matrix for P-polarization
                 key_p = (i_layer, wl, ang_rad, 'p')
                 if key_p not in matrix_cache:
                     matrix_cache[key_p], _ = calculate_transfer_matrix('p', wl, ang_rad, Ni, thickness)
                 M_layer_p = matrix_cache[key_p]
                 M_total_p = M_layer_p @ M_total_p
 
-            # Calculate admittances for incident medium and substrate
             eta_inc_s, eta_sub_s = calculate_admittances('s', ang_rad, incident_medium_index, nSub)
             eta_inc_p, eta_sub_p = calculate_admittances('p', ang_rad, incident_medium_index, nSub)
 
-            # --- Calculate R, T for S-polarization ---
             Ms = M_total_s
             denom_s = (eta_inc_s * Ms[0, 0] + eta_sub_s * Ms[1, 1] + eta_inc_s * eta_sub_s * Ms[0, 1] + Ms[1, 0])
             if abs(denom_s) < 1e-12:
-                rs_inf = 1.0 # Reflection = 1 if denominator is zero
+                rs_inf = 1.0
                 ts_inf = 0.0
             else:
                 rs_inf = (eta_inc_s * Ms[0, 0] - eta_sub_s * Ms[1, 1] + eta_inc_s * eta_sub_s * Ms[0, 1] - Ms[1, 0]) / denom_s
                 ts_inf = 2 * eta_inc_s / denom_s
 
             Rs_inf = np.abs(rs_inf)**2
-            # Handle division by zero for Ts_inf
             if abs(np.real(eta_inc_s)) < 1e-12:
                  Ts_inf = 0.0
             else:
-                 # Ensure result is real
                  Ts_inf = np.real(eta_sub_s) / np.real(eta_inc_s) * np.abs(ts_inf)**2
 
-            # --- Calculate R, T for P-polarization ---
             Mp = M_total_p
             denom_p = (eta_inc_p * Mp[0, 0] + eta_sub_p * Mp[1, 1] + eta_inc_p * eta_sub_p * Mp[0, 1] + Mp[1, 0])
             if abs(denom_p) < 1e-12:
@@ -158,13 +136,9 @@ def calculate_global_RT(wavelengths, angles_rad, nH, nL, nSub, physical_thicknes
             if abs(np.real(eta_inc_p)) < 1e-12:
                  Tp_inf = 0.0
             else:
-                 # Ensure result is real
                  Tp_inf = np.real(eta_sub_p) / np.real(eta_inc_p) * np.abs(tp_inf)**2
 
-            # --- Correction for finite substrate (incoherent multiple reflections) ---
             if finite_substrate:
-                # Reflectance of the back interface (Substrate -> Incident Medium)
-                # Assuming the medium after substrate is the same as incident medium
                 eta_inc_rev_s, eta_sub_rev_s = calculate_admittances('s', ang_rad, nSub, incident_medium_index)
                 eta_inc_rev_p, eta_sub_rev_p = calculate_admittances('p', ang_rad, nSub, incident_medium_index)
 
@@ -174,19 +148,17 @@ def calculate_global_RT(wavelengths, angles_rad, nH, nL, nSub, physical_thicknes
                 denom_bp = eta_inc_rev_p + eta_sub_rev_p
                 Rb_p = np.abs((eta_inc_rev_p - eta_sub_rev_p) / denom_bp)**2 if abs(denom_bp) > 1e-12 else 1.0
 
-                # Corrected R and T formulas (handle potential division by zero)
                 denom_Rs_corr = 1 - Rs_inf * Rb_s
-                Rs = Rs_inf + (Ts_inf * Rb_s * Ts_inf / denom_Rs_corr) if abs(denom_Rs_corr) > 1e-12 else Rs_inf # Approximation if denom is zero
-                Ts = (Ts_inf * (1 - Rb_s) / denom_Rs_corr) if abs(denom_Rs_corr) > 1e-12 else Ts_inf * (1 - Rb_s) # Approximation if denom is zero
+                Rs = Rs_inf + (Ts_inf * Rb_s * Ts_inf / denom_Rs_corr) if abs(denom_Rs_corr) > 1e-12 else Rs_inf
+                Ts = (Ts_inf * (1 - Rb_s) / denom_Rs_corr) if abs(denom_Rs_corr) > 1e-12 else Ts_inf * (1 - Rb_s)
 
                 denom_Rp_corr = 1 - Rp_inf * Rb_p
                 Rp = Rp_inf + (Tp_inf * Rb_p * Tp_inf / denom_Rp_corr) if abs(denom_Rp_corr) > 1e-12 else Rp_inf
                 Tp = (Tp_inf * (1 - Rb_p) / denom_Rp_corr) if abs(denom_Rp_corr) > 1e-12 else Tp_inf * (1 - Rb_p)
 
-            else: # Infinite substrate case
+            else:
                 Rs, Ts, Rp, Tp = Rs_inf, Ts_inf, Rp_inf, Tp_inf
 
-            # Store results, ensuring they are physically plausible (0 to 1) and not NaN
             RT[i_wl, i_ang, 0] = np.clip(np.nan_to_num(Rs), 0, 1)
             RT[i_wl, i_ang, 1] = np.clip(np.nan_to_num(Rp), 0, 1)
             RT[i_wl, i_ang, 2] = np.clip(np.nan_to_num(Ts), 0, 1)
@@ -195,11 +167,6 @@ def calculate_global_RT(wavelengths, angles_rad, nH, nL, nSub, physical_thicknes
     return RT
 
 def calculate_stack_properties(nH, nL, nSub, l0, stack_string, wl_range, wl_step, ang_range, ang_step, incidence_angle_deg, points_per_layer, finite_substrate, monitoring_wavelength):
-    """
-    Calculates reflectance and transmittance of a thin film stack.
-    Also calculates monitoring curve data.
-    Returns results dictionary and validated layer multiplier list, or None, None on error.
-    """
     try:
         layer_multipliers = [float(e) for e in stack_string.split(',') if e.strip()]
         if not layer_multipliers:
@@ -213,7 +180,6 @@ def calculate_stack_properties(nH, nL, nSub, l0, stack_string, wl_range, wl_step
     wavelength_angular = np.array([l0])
     angles_rad_angular = np.radians(np.arange(ang_range[0], ang_range[1] + ang_step, ang_step))
 
-    # Calculate physical thicknesses
     physical_thicknesses = []
     for i, multiplier in enumerate(layer_multipliers):
         Ni = nH if i % 2 == 0 else nL
@@ -224,19 +190,16 @@ def calculate_stack_properties(nH, nL, nSub, l0, stack_string, wl_range, wl_step
              return None, None
         physical_thicknesses.append(multiplier * l0 / (4 * n_real))
 
-    # Calculate Spectral and Angular RT
     RT_spectral = calculate_global_RT(wavelengths, [incidence_rad_spectral], nH, nL, nSub, physical_thicknesses, finite_substrate)
     RT_angular = calculate_global_RT(wavelength_angular, angles_rad_angular, nH, nL, nSub, physical_thicknesses, finite_substrate)
 
-    # --- Calculate Transmission for Monitoring Curve ---
     transmissions_at_interfaces = []
     transmissions_intermediate = []
     thicknesses_intermediate = []
     cumulative_thicknesses = np.cumsum(physical_thicknesses)
-    incident_medium_index = 1.0 # Assuming air
+    incident_medium_index = 1.0
 
-    # T for bare substrate (thickness = 0)
-    monitoring_angle_rad = incidence_rad_spectral # Use the same angle as spectral calc
+    monitoring_angle_rad = incidence_rad_spectral
     eta_inc_s_bare, eta_sub_s_bare = calculate_admittances('s', monitoring_angle_rad, incident_medium_index, nSub)
 
     denom_s_bare = eta_inc_s_bare + eta_sub_s_bare
@@ -257,28 +220,23 @@ def calculate_stack_properties(nH, nL, nSub, l0, stack_string, wl_range, wl_step
 
     transmissions_at_interfaces.append(np.clip(np.nan_to_num(T_substrate_bare), 0, 1))
 
-    # Calculate T at intermediate points and layer interfaces
     M_cumulative_s = np.eye(2, dtype=np.complex128)
     current_cumulative_thickness = 0.0
-    # Need eta_inc and eta_sub for the monitoring wavelength and angle
     eta_inc_s_mon, eta_sub_s_mon = calculate_admittances('s', monitoring_angle_rad, incident_medium_index, nSub)
-    # Need Rb_s for finite substrate correction (calculated once)
     Rb_s_mon = 0.0
     if finite_substrate:
         eta_inc_rev_s_mon, _ = calculate_admittances('s', monitoring_angle_rad, nSub, incident_medium_index)
-        denom_bs_mon = eta_inc_rev_s_mon + incident_medium_index # eta_sub for air=1 (approx)
+        denom_bs_mon = eta_inc_rev_s_mon + incident_medium_index
         Rb_s_mon = np.abs((eta_inc_rev_s_mon - incident_medium_index) / denom_bs_mon)**2 if abs(denom_bs_mon) > 1e-12 else 1.0
 
 
     for i_layer, layer_thickness in enumerate(physical_thicknesses):
         Ni = nH if i_layer % 2 == 0 else nL
-        # Intermediate points within the layer
         for k in range(1, points_per_layer + 1):
              partial_thickness = layer_thickness * k / (points_per_layer + 1)
              M_segment_s, _ = calculate_transfer_matrix('s', monitoring_wavelength, monitoring_angle_rad, Ni, partial_thickness)
-             M_intermediate = M_segment_s @ M_cumulative_s # Matrix up to this point
+             M_intermediate = M_segment_s @ M_cumulative_s
 
-             # Calculate T at this intermediate point
              denom_s = (eta_inc_s_mon * M_intermediate[0, 0] + eta_sub_s_mon * M_intermediate[1, 1] + eta_inc_s_mon * eta_sub_s_mon * M_intermediate[0, 1] + M_intermediate[1, 0])
              ts_inf = 2 * eta_inc_s_mon / denom_s if abs(denom_s) > 1e-12 else 0.0
              Ts_inf = 0.0
@@ -296,12 +254,10 @@ def calculate_stack_properties(nH, nL, nSub, l0, stack_string, wl_range, wl_step
              transmissions_intermediate.append(np.clip(np.nan_to_num(T_intermediate), 0, 1))
              thicknesses_intermediate.append(current_cumulative_thickness + partial_thickness)
 
-        # End of the layer
         M_layer_s, _ = calculate_transfer_matrix('s', monitoring_wavelength, monitoring_angle_rad, Ni, layer_thickness)
         M_cumulative_s = M_layer_s @ M_cumulative_s
         current_cumulative_thickness += layer_thickness
 
-        # Calculate T at the end of the layer
         denom_s = (eta_inc_s_mon * M_cumulative_s[0, 0] + eta_sub_s_mon * M_cumulative_s[1, 1] + eta_inc_s_mon * eta_sub_s_mon * M_cumulative_s[0, 1] + M_cumulative_s[1, 0])
         ts_inf = 2 * eta_inc_s_mon / denom_s if abs(denom_s) > 1e-12 else 0.0
         Ts_inf = 0.0
@@ -318,7 +274,6 @@ def calculate_stack_properties(nH, nL, nSub, l0, stack_string, wl_range, wl_step
 
         transmissions_at_interfaces.append(np.clip(np.nan_to_num(T_end_layer), 0, 1))
 
-    # Construct results dictionary
     results = {
         'wavelengths': wavelengths, 'incidence_angle_spectral_deg': np.array([incidence_angle_deg]),
         'Rs_spectral': RT_spectral[:, 0, 0], 'Rp_spectral': RT_spectral[:, 0, 1],
@@ -326,13 +281,13 @@ def calculate_stack_properties(nH, nL, nSub, l0, stack_string, wl_range, wl_step
         'wavelength_angular': wavelength_angular, 'angles_deg_angular': np.degrees(angles_rad_angular),
         'Rs_angular': RT_angular[0, :, 0], 'Rp_angular': RT_angular[0, :, 1],
         'Ts_angular': RT_angular[0, :, 2], 'Tp_angular': RT_angular[0, :, 3],
-        'transmissions_interfaces': transmissions_at_interfaces, # T at thickness=0 and end of each layer
-        'transmissions_intermediate': transmissions_intermediate, # T at intermediate points
-        'thicknesses_intermediate': thicknesses_intermediate, # Cumulative thickness at intermediate points
-        'thicknesses_interfaces': np.concatenate(([0.0], cumulative_thicknesses)), # Cumulative thickness at interfaces
+        'transmissions_interfaces': transmissions_at_interfaces,
+        'transmissions_intermediate': transmissions_intermediate,
+        'thicknesses_intermediate': thicknesses_intermediate,
+        'thicknesses_interfaces': np.concatenate(([0.0], cumulative_thicknesses)),
         'monitoring_wavelength': monitoring_wavelength,
         'points_per_layer': points_per_layer,
-        'physical_thicknesses': physical_thicknesses # Individual physical layer thicknesses
+        'physical_thicknesses': physical_thicknesses
     }
 
     return results, layer_multipliers
@@ -399,7 +354,7 @@ def plot_index_and_monitoring(res, params, layer_multipliers):
 
     last_cumulative_thickness = cumulative_thicknesses[-1] if len(cumulative_thicknesses) > 0 else 0
     x_coords_index = np.concatenate(([-50, 0], cumulative_thicknesses, [last_cumulative_thickness + 51]))
-    y_coords_index = np.concatenate(([nSub, nSub], real_indices, [1])) # Air index = 1
+    y_coords_index = np.concatenate(([nSub, nSub], real_indices, [1]))
 
     ax1.plot(x_coords_index, y_coords_index, drawstyle='steps-post', label='n (real)', color='green')
     ax1.set_xlabel('Cumulative Thickness (nm)')
@@ -564,7 +519,6 @@ def plot_complex_rs(res, params, layer_multipliers):
     else:
         ax.plot(rs_sorted_real, rs_sorted_imag, '-', color='black', linewidth=0.8, alpha=0.7, zorder=-1)
 
-
     ax.set_xlabel('Re(rs)')
     ax.set_ylabel('Im(rs)')
     ax.set_title(f'Complex Plane: rs (S-Pol, λ={monitoring_wavelength:.0f} nm, θ={params["incidence_angle_deg"]:.1f}°)')
@@ -591,7 +545,6 @@ def generate_excel_output(res, params, layer_multipliers):
         params_dict_export = params.copy()
         params_dict_export['nH'] = f"{np.real(params['nH']):.4f}{np.imag(params['nH']):+.4f}j"
         params_dict_export['nL'] = f"{np.real(params['nL']):.4f}{np.imag(params['nL']):+.4f}j"
-        # Convert tuples/ranges if they exist and are complex for display
         if 'l_range' in params_dict_export: params_dict_export['l_range'] = str(params_dict_export['l_range'])
         if 'a_range' in params_dict_export: params_dict_export['a_range'] = str(params_dict_export['a_range'])
 
@@ -636,30 +589,25 @@ def generate_excel_output(res, params, layer_multipliers):
             is_params_sheet = (sheet_name == 'Parameters')
 
             for i, col in enumerate(df_current.columns):
-                # Calculate column width based on data and header
                 try:
-                    # Calculate max length of data in the column more robustly
                     if not df_current[col].empty:
                         col_len = df_current[col].astype(str).map(len).max()
                     else:
                         col_len = 0
                     header_len = len(str(col))
-                    # Handle potential NaN from max() on empty sequence
                     data_len = col_len if pd.notna(col_len) else 0
-                    max_len = max(data_len, header_len) + 2 # Add buffer
-                    col_idx_to_set = i + (1 if is_params_sheet else 0) # Offset for index in Params sheet
+                    max_len = max(data_len, header_len) + 2
+                    col_idx_to_set = i + (1 if is_params_sheet else 0)
                     worksheet.set_column(col_idx_to_set, col_idx_to_set, max_len)
                 except Exception as e_col_width:
                      st.warning(f"Could not set width for col '{col}' in sheet '{sheet_name}': {e_col_width}")
 
-
-            # Set width for index column explicitly if it was written (only for params sheet here)
             if is_params_sheet:
                  try:
                      idx_name_len = len(df_current.index.name) if df_current.index.name else 0
                      idx_value_len = df_current.index.astype(str).map(len).max()
                      idx_width = max(idx_name_len, idx_value_len if pd.notna(idx_value_len) else 0) + 2
-                     worksheet.set_column(0, 0, idx_width) # Index is column 0
+                     worksheet.set_column(0, 0, idx_width)
                  except Exception as e_idx_width:
                      st.warning(f"Could not set width for index col in sheet '{sheet_name}': {e_idx_width}")
 
@@ -667,10 +615,8 @@ def generate_excel_output(res, params, layer_multipliers):
     output.seek(0)
     return output
 
-# --- Streamlit App Configuration ---
 st.set_page_config(page_title="Thin Film Calculator", layout="wide")
 
-# --- Initialize Session State ---
 default_params_state = {
     'nH_r': 2.25, 'nH_i': 0.0001,
     'nL_r': 1.48, 'nL_i': 0.0001,
@@ -697,7 +643,6 @@ for key, value in default_params_state.items():
     if key not in st.session_state:
         st.session_state[key] = value
 
-# --- Help Text ---
 help_text = """
 **User Guide - Thin Film Stack Calculator**
 
@@ -764,63 +709,59 @@ For further assistance, questions, or bug reports, please contact Fabien Lemarch
 """
 
 
-# --- Sidebar UI Elements ---
 st.sidebar.header("Simulation Parameters")
 
 with st.sidebar.expander("Optical Indices", expanded=True):
-    st.session_state.nH_r = st.number_input("Material H (real)", value=st.session_state.nH_r, step=0.01, format="%.4f", key="nH_r")
-    st.session_state.nH_i = st.number_input("Material H (imag)", value=st.session_state.nH_i, step=0.0001, format="%.4f", min_value=0.0, key="nH_i")
-    st.session_state.nL_r = st.number_input("Material L (real)", value=st.session_state.nL_r, step=0.01, format="%.4f", key="nL_r")
-    st.session_state.nL_i = st.number_input("Material L (imag)", value=st.session_state.nL_i, step=0.0001, format="%.4f", min_value=0.0, key="nL_i")
-    st.session_state.nSub = st.number_input("Substrate (real index)", value=st.session_state.nSub, step=0.01, format="%.4f", key="nSub")
+    st.number_input("Material H (real)", value=st.session_state.nH_r, step=0.01, format="%.4f", key="nH_r")
+    st.number_input("Material H (imag)", value=st.session_state.nH_i, step=0.0001, format="%.4f", min_value=0.0, key="nH_i")
+    st.number_input("Material L (real)", value=st.session_state.nL_r, step=0.01, format="%.4f", key="nL_r")
+    st.number_input("Material L (imag)", value=st.session_state.nL_i, step=0.0001, format="%.4f", min_value=0.0, key="nL_i")
+    st.number_input("Substrate (real index)", value=st.session_state.nSub, step=0.01, format="%.4f", key="nSub")
 
 with st.sidebar.expander("Stack and Geometry", expanded=True):
-    st.session_state.l0 = st.number_input("QWOT Center λ (nm)", value=st.session_state.l0, step=1.0, min_value=0.1, key="l0")
-    st.session_state.stack_string = st.text_input("Stack Definition (QWOT, e.g., 1,1,2,1)", value=st.session_state.stack_string, key="stack_string")
+    st.number_input("QWOT Center λ (nm)", value=st.session_state.l0, step=1.0, min_value=0.1, key="l0")
+    st.text_input("Stack Definition (QWOT, e.g., 1,1,2,1)", value=st.session_state.stack_string, key="stack_string")
     try:
         num_layers_disp = len([e for e in st.session_state.stack_string.split(',') if e.strip()])
         st.caption(f"Number of layers: {num_layers_disp}")
     except:
         st.caption("Layer count: Format error")
 
-    st.session_state.incidence_angle_deg = st.number_input("Incidence Angle (degrees)", value=st.session_state.incidence_angle_deg, step=1.0, min_value=0.0, max_value=89.9, key="incidence_angle_deg")
-    st.session_state.finite_substrate = st.checkbox("Finite Substrate (incoherent reflections)", value=st.session_state.finite_substrate, key="finite_substrate")
+    st.number_input("Incidence Angle (degrees)", value=st.session_state.incidence_angle_deg, step=1.0, min_value=0.0, max_value=89.9, key="incidence_angle_deg")
+    st.checkbox("Finite Substrate (incoherent reflections)", value=st.session_state.finite_substrate, key="finite_substrate")
 
 with st.sidebar.expander("Calculation Ranges", expanded=False):
     col_l1, col_l2, col_l3 = st.columns(3)
     with col_l1:
-        st.session_state.wl_range_start = st.number_input("Spectral λ Start (nm)", value=st.session_state.wl_range_start, step=1.0, key="wl_start")
+        st.number_input("Spectral λ Start (nm)", value=st.session_state.wl_range_start, step=1.0, key="wl_start")
     with col_l2:
-        st.session_state.wl_range_end = st.number_input("Spectral λ End (nm)", value=st.session_state.wl_range_end, step=1.0, key="wl_end")
+        st.number_input("Spectral λ End (nm)", value=st.session_state.wl_range_end, step=1.0, key="wl_end")
     with col_l3:
-        st.session_state.wl_step = st.number_input("λ Step (nm)", value=st.session_state.wl_step, step=0.1, min_value=0.01, key="wl_step") # Min value > 0
+        st.number_input("λ Step (nm)", value=st.session_state.wl_step, step=0.1, min_value=0.01, key="wl_step")
 
     col_a1, col_a2, col_a3 = st.columns(3)
     with col_a1:
-        st.session_state.ang_range_start = st.number_input("Angle Start (deg)", value=st.session_state.ang_range_start, step=1.0, key="ang_start")
+        st.number_input("Angle Start (deg)", value=st.session_state.ang_range_start, step=1.0, key="ang_start")
     with col_a2:
-        st.session_state.ang_range_end = st.number_input("Angle End (deg)", value=st.session_state.ang_range_end, step=1.0, key="ang_end")
+        st.number_input("Angle End (deg)", value=st.session_state.ang_range_end, step=1.0, key="ang_end")
     with col_a3:
-        st.session_state.ang_step = st.number_input("Angle Step (deg)", value=st.session_state.ang_step, step=0.1, min_value=0.01, key="ang_step") # Min value > 0
+        st.number_input("Angle Step (deg)", value=st.session_state.ang_step, step=0.1, min_value=0.01, key="ang_step")
 
 with st.sidebar.expander("Monitoring", expanded=False):
-     st.session_state.monitoring_wavelength = st.number_input("Monitoring λ (nm)", value=st.session_state.monitoring_wavelength, step=1.0, key="mon_wl")
-     st.session_state.points_per_layer = st.number_input("Pts per Layer (monitoring)", value=st.session_state.points_per_layer, step=1, min_value=0, key="mon_pts")
+     st.number_input("Monitoring λ (nm)", value=st.session_state.monitoring_wavelength, step=1.0, key="mon_wl")
+     st.number_input("Pts per Layer (monitoring)", value=st.session_state.points_per_layer, step=1, min_value=0, key="mon_pts")
 
 
-# --- Sidebar Actions ---
 st.sidebar.markdown("---")
 run_calculation = st.sidebar.button("🚀 Run Calculation", use_container_width=True, type="primary")
 st.sidebar.markdown("---")
-st.session_state.export_excel = st.sidebar.checkbox("Prepare Excel Export", value=st.session_state.export_excel, key="export_cb")
+st.checkbox("Prepare Excel Export", value=st.session_state.export_excel, key="export_cb")
 
-# --- Sidebar Help ---
 with st.sidebar.expander("Help / User Guide"):
      st.markdown(help_text)
 
-# --- Main Calculation Logic ---
+
 if run_calculation:
-    # Reset previous results
     st.session_state.results = None
     st.session_state.layer_multipliers_list = None
     st.session_state.fig_spectral = None
@@ -829,7 +770,6 @@ if run_calculation:
     st.session_state.fig_stack = None
     st.session_state.fig_complex = None
 
-    # Validate inputs
     valid_input = True
     if st.session_state.wl_range_end <= st.session_state.wl_range_start:
         st.sidebar.error("Spectral λ End <= Start")
@@ -849,13 +789,11 @@ if run_calculation:
 
 
     if valid_input:
-        # Prepare complex indices
         nH_complex = st.session_state.nH_r + 1j * st.session_state.nH_i
         nL_complex = st.session_state.nL_r + 1j * st.session_state.nL_i
 
-        # Gather parameters for calculation function
         calc_params = {
-            'nH': nH_complex, 'nL': nL_complex, 'nSub': st.session_state.nSub, # nSub assumed real for now
+            'nH': nH_complex, 'nL': nL_complex, 'nSub': st.session_state.nSub,
             'l0': st.session_state.l0, 'stack_string': st.session_state.stack_string,
             'wl_range': (st.session_state.wl_range_start, st.session_state.wl_range_end),
             'wl_step': st.session_state.wl_step,
@@ -867,7 +805,6 @@ if run_calculation:
             'monitoring_wavelength': st.session_state.monitoring_wavelength
         }
 
-        # Run calculation with status indicator
         with st.spinner("Calculation in progress..."):
              try:
                 results_calc, layer_multipliers_validated = calculate_stack_properties(**calc_params)
@@ -877,41 +814,37 @@ if run_calculation:
                     st.session_state.layer_multipliers_list = layer_multipliers_validated
                     st.success("Calculation successful!")
 
-                    # Generate static plots immediately
                     st.session_state.fig_spectral = plot_spectral_results(results_calc, calc_params)
                     st.session_state.fig_angular = plot_angular_results(results_calc, calc_params)
                     st.session_state.fig_profile_monitoring = plot_index_and_monitoring(results_calc, calc_params, layer_multipliers_validated)
                     st.session_state.fig_stack = plot_stack_structure(results_calc, calc_params, layer_multipliers_validated)
 
                 else:
-                     # Error handled within calculate_stack_properties using st.error
                      st.session_state.results = None
                      st.session_state.layer_multipliers_list = None
 
 
              except Exception as e:
                  st.error(f"An error occurred during calculation: {e}")
-                 st.error(traceback.format_exc()) # Show detailed traceback for debugging
+                 st.error(traceback.format_exc())
                  st.session_state.results = None
                  st.session_state.layer_multipliers_list = None
 
-# --- Main Area: Display Results ---
+
 st.title("Thin Film Stack Simulation Results")
 
 if st.session_state.results:
     results = st.session_state.results
-    # Recreate params dict needed for plotting/export (only includes necessary items now)
     params_used_for_plots = {
             'nH': st.session_state.nH_r + 1j * st.session_state.nH_i,
             'nL': st.session_state.nL_r + 1j * st.session_state.nL_i,
             'nSub': st.session_state.nSub,
             'incidence_angle_deg': st.session_state.incidence_angle_deg,
             'finite_substrate': st.session_state.finite_substrate,
-            'stack_string': st.session_state.stack_string # Needed for Excel export
+            'stack_string': st.session_state.stack_string
     }
     layer_multipliers_list = st.session_state.layer_multipliers_list
 
-    # --- Display Plots in Tabs ---
     tab1, tab2, tab3, tab4 = st.tabs(["📈 Spectral & Angular", "🔬 Profile & Monitoring", "🏗️ Stack Structure", "🌀 Complex rs Plane"])
 
     with tab1:
@@ -949,7 +882,6 @@ if st.session_state.results:
              if layer_multipliers_list is not None:
                  try:
                       with st.spinner("Generating complex plane plot..."):
-                         # Pass layer_multipliers_list instead of emp
                          st.session_state.fig_complex = plot_complex_rs(results, params_used_for_plots, layer_multipliers_list)
                          st.pyplot(st.session_state.fig_complex)
                  except Exception as e_complex:
@@ -958,20 +890,17 @@ if st.session_state.results:
              else:
                  st.warning("Please run a successful calculation first.")
 
-         # Display plot if already generated in this session
          elif st.session_state.fig_complex:
                st.pyplot(st.session_state.fig_complex)
          else:
                st.info("Click the button above to generate the plot (requires successful calculation).")
 
 
-    # --- Excel Export Handling (Sidebar) ---
     if st.session_state.export_excel:
         st.sidebar.markdown("---")
         st.sidebar.subheader("Export")
-        if layer_multipliers_list is not None: # Check if calculation was successful
+        if layer_multipliers_list is not None:
             try:
-                # Use a spinner while generating the potentially large file
                 with st.spinner("Preparing Excel file..."):
                      excel_data = generate_excel_output(results, params_used_for_plots, layer_multipliers_list)
                      num_layers_export = len(layer_multipliers_list) if layer_multipliers_list else 0
@@ -990,16 +919,13 @@ if st.session_state.results:
                 st.sidebar.error(f"Error creating Excel file: {e_excel}")
                 st.sidebar.error(traceback.format_exc())
         else:
-             # Show warning if checkbox is ticked but no results are available
              st.sidebar.warning("Run calculation first to enable export.")
 
 
-elif run_calculation: # If button was pressed but results are None
+elif run_calculation:
      st.warning("Calculation could not be completed. Please check parameters and error messages.")
 else:
-    # Initial message when app loads
     st.info("Configure parameters in the sidebar and click 'Run Calculation'.")
 
-# --- Footer ---
 st.sidebar.markdown("---")
 st.sidebar.caption("Thin Film Calculator v1.4-en")
