@@ -758,175 +758,178 @@ run_calculation = st.sidebar.button("🚀 Run Calculation", use_container_width=
 st.sidebar.markdown("---")
 st.checkbox("Prepare Excel Export", value=st.session_state.export_excel, key="export_cb")
 
-with st.sidebar.expander("Help / User Guide"):
-     st.markdown(help_text)
+main_content_col, help_col = st.columns([3, 1])
+
+with main_content_col:
+    st.title("Thin Film Stack Simulation Results")
+
+    if run_calculation:
+        st.session_state.results = None
+        st.session_state.layer_multipliers_list = None
+        st.session_state.fig_spectral = None
+        st.session_state.fig_angular = None
+        st.session_state.fig_profile_monitoring = None
+        st.session_state.fig_stack = None
+        st.session_state.fig_complex = None
+
+        valid_input = True
+        if st.session_state.wl_range_end <= st.session_state.wl_range_start:
+            st.sidebar.error("Spectral λ End <= Start")
+            valid_input = False
+        if st.session_state.ang_range_end <= st.session_state.ang_range_start:
+            st.sidebar.error("Angle End <= Start")
+            valid_input = False
+        if not st.session_state.stack_string.strip():
+             st.sidebar.error("Stack definition cannot be empty.")
+             valid_input = False
+        if st.session_state.wl_step <= 0 or st.session_state.ang_step <= 0:
+             st.sidebar.error("Spectral and Angular steps must be > 0.")
+             valid_input = False
+        if st.session_state.l0 <= 0:
+             st.sidebar.error("QWOT Center λ must be > 0.")
+             valid_input = False
 
 
-if run_calculation:
-    st.session_state.results = None
-    st.session_state.layer_multipliers_list = None
-    st.session_state.fig_spectral = None
-    st.session_state.fig_angular = None
-    st.session_state.fig_profile_monitoring = None
-    st.session_state.fig_stack = None
-    st.session_state.fig_complex = None
+        if valid_input:
+            nH_complex = st.session_state.nH_r + 1j * st.session_state.nH_i
+            nL_complex = st.session_state.nL_r + 1j * st.session_state.nL_i
 
-    valid_input = True
-    if st.session_state.wl_range_end <= st.session_state.wl_range_start:
-        st.sidebar.error("Spectral λ End <= Start")
-        valid_input = False
-    if st.session_state.ang_range_end <= st.session_state.ang_range_start:
-        st.sidebar.error("Angle End <= Start")
-        valid_input = False
-    if not st.session_state.stack_string.strip():
-         st.sidebar.error("Stack definition cannot be empty.")
-         valid_input = False
-    if st.session_state.wl_step <= 0 or st.session_state.ang_step <= 0:
-         st.sidebar.error("Spectral and Angular steps must be > 0.")
-         valid_input = False
-    if st.session_state.l0 <= 0:
-         st.sidebar.error("QWOT Center λ must be > 0.")
-         valid_input = False
+            calc_params = {
+                'nH': nH_complex, 'nL': nL_complex, 'nSub': st.session_state.nSub,
+                'l0': st.session_state.l0, 'stack_string': st.session_state.stack_string,
+                'wl_range': (st.session_state.wl_range_start, st.session_state.wl_range_end),
+                'wl_step': st.session_state.wl_step,
+                'ang_range': (st.session_state.ang_range_start, st.session_state.ang_range_end),
+                'ang_step': st.session_state.ang_step,
+                'incidence_angle_deg': st.session_state.incidence_angle_deg,
+                'points_per_layer': st.session_state.points_per_layer,
+                'finite_substrate': st.session_state.finite_substrate,
+                'monitoring_wavelength': st.session_state.monitoring_wavelength
+            }
+
+            with st.spinner("Calculation in progress..."):
+                 try:
+                    results_calc, layer_multipliers_validated = calculate_stack_properties(**calc_params)
+
+                    if results_calc is not None and layer_multipliers_validated is not None:
+                        st.session_state.results = results_calc
+                        st.session_state.layer_multipliers_list = layer_multipliers_validated
+                        st.success("Calculation successful!")
+
+                        st.session_state.fig_spectral = plot_spectral_results(results_calc, calc_params)
+                        st.session_state.fig_angular = plot_angular_results(results_calc, calc_params)
+                        st.session_state.fig_profile_monitoring = plot_index_and_monitoring(results_calc, calc_params, layer_multipliers_validated)
+                        st.session_state.fig_stack = plot_stack_structure(results_calc, calc_params, layer_multipliers_validated)
+
+                    else:
+                         st.session_state.results = None
+                         st.session_state.layer_multipliers_list = None
 
 
-    if valid_input:
-        nH_complex = st.session_state.nH_r + 1j * st.session_state.nH_i
-        nL_complex = st.session_state.nL_r + 1j * st.session_state.nL_i
-
-        calc_params = {
-            'nH': nH_complex, 'nL': nL_complex, 'nSub': st.session_state.nSub,
-            'l0': st.session_state.l0, 'stack_string': st.session_state.stack_string,
-            'wl_range': (st.session_state.wl_range_start, st.session_state.wl_range_end),
-            'wl_step': st.session_state.wl_step,
-            'ang_range': (st.session_state.ang_range_start, st.session_state.ang_range_end),
-            'ang_step': st.session_state.ang_step,
-            'incidence_angle_deg': st.session_state.incidence_angle_deg,
-            'points_per_layer': st.session_state.points_per_layer,
-            'finite_substrate': st.session_state.finite_substrate,
-            'monitoring_wavelength': st.session_state.monitoring_wavelength
-        }
-
-        with st.spinner("Calculation in progress..."):
-             try:
-                results_calc, layer_multipliers_validated = calculate_stack_properties(**calc_params)
-
-                if results_calc is not None and layer_multipliers_validated is not None:
-                    st.session_state.results = results_calc
-                    st.session_state.layer_multipliers_list = layer_multipliers_validated
-                    st.success("Calculation successful!")
-
-                    st.session_state.fig_spectral = plot_spectral_results(results_calc, calc_params)
-                    st.session_state.fig_angular = plot_angular_results(results_calc, calc_params)
-                    st.session_state.fig_profile_monitoring = plot_index_and_monitoring(results_calc, calc_params, layer_multipliers_validated)
-                    st.session_state.fig_stack = plot_stack_structure(results_calc, calc_params, layer_multipliers_validated)
-
-                else:
+                 except Exception as e:
+                     st.error(f"An error occurred during calculation: {e}")
+                     st.error(traceback.format_exc())
                      st.session_state.results = None
                      st.session_state.layer_multipliers_list = None
 
+    if st.session_state.results:
+        results = st.session_state.results
+        params_used_for_plots = {
+                'nH': st.session_state.nH_r + 1j * st.session_state.nH_i,
+                'nL': st.session_state.nL_r + 1j * st.session_state.nL_i,
+                'nSub': st.session_state.nSub,
+                'incidence_angle_deg': st.session_state.incidence_angle_deg,
+                'finite_substrate': st.session_state.finite_substrate,
+                'stack_string': st.session_state.stack_string
+        }
+        layer_multipliers_list = st.session_state.layer_multipliers_list
 
-             except Exception as e:
-                 st.error(f"An error occurred during calculation: {e}")
-                 st.error(traceback.format_exc())
-                 st.session_state.results = None
-                 st.session_state.layer_multipliers_list = None
+        tab1, tab2, tab3, tab4 = st.tabs(["📈 Spectral & Angular", "🔬 Profile & Monitoring", "🏗️ Stack Structure", "🌀 Complex rs Plane"])
 
-
-st.title("Thin Film Stack Simulation Results")
-
-if st.session_state.results:
-    results = st.session_state.results
-    params_used_for_plots = {
-            'nH': st.session_state.nH_r + 1j * st.session_state.nH_i,
-            'nL': st.session_state.nL_r + 1j * st.session_state.nL_i,
-            'nSub': st.session_state.nSub,
-            'incidence_angle_deg': st.session_state.incidence_angle_deg,
-            'finite_substrate': st.session_state.finite_substrate,
-            'stack_string': st.session_state.stack_string
-    }
-    layer_multipliers_list = st.session_state.layer_multipliers_list
-
-    tab1, tab2, tab3, tab4 = st.tabs(["📈 Spectral & Angular", "🔬 Profile & Monitoring", "🏗️ Stack Structure", "🌀 Complex rs Plane"])
-
-    with tab1:
-        st.subheader("Spectral Response")
-        if st.session_state.fig_spectral:
-            st.pyplot(st.session_state.fig_spectral)
-        else:
-            st.warning("Spectral plot could not be generated.")
-
-        st.subheader("Angular Response")
-        if st.session_state.fig_angular:
-             st.pyplot(st.session_state.fig_angular)
-        else:
-             st.warning("Angular plot could not be generated.")
-
-    with tab2:
-        st.subheader("Index Profile & Monitoring Curve")
-        if st.session_state.fig_profile_monitoring:
-             st.pyplot(st.session_state.fig_profile_monitoring)
-        else:
-             st.warning("Profile & Monitoring plot could not be generated.")
-
-    with tab3:
-         st.subheader("Stack Visualization")
-         if st.session_state.fig_stack:
-             st.pyplot(st.session_state.fig_stack)
-         else:
-             st.warning("Stack structure plot could not be generated.")
-
-    with tab4:
-         st.subheader("Complex Reflection Coefficient (rs)")
-         st.write(f"Traces the S-polarization reflection coefficient `rs` in the complex plane during deposition.")
-         st.write(f"(Calculated at λ = {st.session_state.monitoring_wavelength} nm and incidence = {st.session_state.incidence_angle_deg}°).")
-         if st.button("Plot rs in Complex Plane"):
-             if layer_multipliers_list is not None:
-                 try:
-                      with st.spinner("Generating complex plane plot..."):
-                         st.session_state.fig_complex = plot_complex_rs(results, params_used_for_plots, layer_multipliers_list)
-                         st.pyplot(st.session_state.fig_complex)
-                 except Exception as e_complex:
-                      st.error(f"Error plotting complex rs: {e_complex}")
-                      st.error(traceback.format_exc())
+        with tab1:
+            st.subheader("Spectral Response")
+            if st.session_state.fig_spectral: st.pyplot(st.session_state.fig_spectral)
+            else: st.warning("Spectral plot could not be generated.")
+            st.subheader("Angular Response")
+            if st.session_state.fig_angular: st.pyplot(st.session_state.fig_angular)
+            else: st.warning("Angular plot could not be generated.")
+        with tab2:
+            st.subheader("Index Profile & Monitoring Curve")
+            if st.session_state.fig_profile_monitoring: st.pyplot(st.session_state.fig_profile_monitoring)
+            else: st.warning("Profile & Monitoring plot could not be generated.")
+        with tab3:
+             st.subheader("Stack Visualization")
+             if st.session_state.fig_stack: st.pyplot(st.session_state.fig_stack)
+             else: st.warning("Stack structure plot could not be generated.")
+        with tab4:
+             st.subheader("Complex Reflection Coefficient (rs)")
+             st.write(f"Traces the S-polarization reflection coefficient `rs` in the complex plane during deposition.")
+             st.write(f"(Calculated at λ = {st.session_state.monitoring_wavelength} nm and incidence = {st.session_state.incidence_angle_deg}°).")
+             if st.button("Plot rs in Complex Plane"):
+                 if layer_multipliers_list is not None:
+                     try:
+                          with st.spinner("Generating complex plane plot..."):
+                             st.session_state.fig_complex = plot_complex_rs(results, params_used_for_plots, layer_multipliers_list)
+                             st.pyplot(st.session_state.fig_complex)
+                     except Exception as e_complex:
+                          st.error(f"Error plotting complex rs: {e_complex}")
+                          st.error(traceback.format_exc())
+                 else:
+                     st.warning("Please run a successful calculation first.")
+             elif st.session_state.fig_complex:
+                   st.pyplot(st.session_state.fig_complex)
              else:
-                 st.warning("Please run a successful calculation first.")
+                   st.info("Click the button above to generate the plot (requires successful calculation).")
 
-         elif st.session_state.fig_complex:
-               st.pyplot(st.session_state.fig_complex)
-         else:
-               st.info("Click the button above to generate the plot (requires successful calculation).")
+    elif run_calculation:
+         st.warning("Calculation could not be completed. Please check parameters and error messages in the sidebar.")
+    else:
+        st.info("Configure parameters in the sidebar and click 'Run Calculation'.")
 
+with help_col:
+    st.subheader("Help / User Guide")
+    st.markdown(help_text)
 
-    if st.session_state.export_excel:
-        st.sidebar.markdown("---")
-        st.sidebar.subheader("Export")
-        if layer_multipliers_list is not None:
-            try:
-                with st.spinner("Preparing Excel file..."):
-                     excel_data = generate_excel_output(results, params_used_for_plots, layer_multipliers_list)
-                     num_layers_export = len(layer_multipliers_list) if layer_multipliers_list else 0
-                     now = datetime.datetime.now()
-                     timestamp = now.strftime("%Y%m%d-%H%M%S")
-                     excel_filename = f"ThinFilm_Results_{num_layers_export}L_{timestamp}.xlsx"
+if st.session_state.export_excel and st.session_state.results and st.session_state.layer_multipliers_list:
+    st.sidebar.markdown("---")
+    st.sidebar.subheader("Export")
+    try:
+        with st.spinner("Preparing Excel file..."):
+             params_export = {
+                'nH': st.session_state.nH_r + 1j * st.session_state.nH_i,
+                'nL': st.session_state.nL_r + 1j * st.session_state.nL_i,
+                'nSub': st.session_state.nSub,
+                'l0': st.session_state.l0,
+                'wl_range': (st.session_state.wl_range_start, st.session_state.wl_range_end),
+                'wl_step': st.session_state.wl_step,
+                'ang_range': (st.session_state.ang_range_start, st.session_state.ang_range_end),
+                'ang_step': st.session_state.ang_step,
+                'incidence_angle_deg': st.session_state.incidence_angle_deg,
+                'points_per_layer': st.session_state.points_per_layer,
+                'finite_substrate': st.session_state.finite_substrate,
+                'monitoring_wavelength': st.session_state.monitoring_wavelength,
+                'stack_string': st.session_state.stack_string
+             }
+             excel_data = generate_excel_output(st.session_state.results, params_export, st.session_state.layer_multipliers_list)
+             num_layers_export = len(st.session_state.layer_multipliers_list)
+             now = datetime.datetime.now()
+             timestamp = now.strftime("%Y%m%d-%H%M%S")
+             excel_filename = f"ThinFilm_Results_{num_layers_export}L_{timestamp}.xlsx"
 
-                     st.sidebar.download_button(
-                         label="📥 Download Results (Excel)",
-                         data=excel_data,
-                         file_name=excel_filename,
-                         mime="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
-                         use_container_width=True
-                     )
-            except Exception as e_excel:
-                st.sidebar.error(f"Error creating Excel file: {e_excel}")
-                st.sidebar.error(traceback.format_exc())
-        else:
-             st.sidebar.warning("Run calculation first to enable export.")
-
-
-elif run_calculation:
-     st.warning("Calculation could not be completed. Please check parameters and error messages.")
-else:
-    st.info("Configure parameters in the sidebar and click 'Run Calculation'.")
+             st.sidebar.download_button(
+                 label="📥 Download Results (Excel)",
+                 data=excel_data,
+                 file_name=excel_filename,
+                 mime="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
+                 use_container_width=True
+             )
+    except Exception as e_excel:
+        st.sidebar.error(f"Error creating Excel file: {e_excel}")
+        st.sidebar.error(traceback.format_exc())
+elif st.session_state.export_excel and not st.session_state.results:
+     st.sidebar.markdown("---")
+     st.sidebar.subheader("Export")
+     st.sidebar.warning("Run calculation first to enable export.")
 
 st.sidebar.markdown("---")
-st.sidebar.caption("Thin Film Calculator v1.7-en")
+st.sidebar.caption("Thin Film Calculator v1.8-en")
