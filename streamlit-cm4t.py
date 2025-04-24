@@ -755,7 +755,7 @@ with st.sidebar.expander("Monitoring", expanded=False):
 st.sidebar.markdown("---")
 run_calculation = st.sidebar.button("🚀 Run Calculation", use_container_width=True, type="primary")
 st.sidebar.markdown("---")
-st.sidebar.checkbox("Prepare Excel Export", value=st.session_state.export_excel, key="export_cb")
+st.sidebar.checkbox("Prepare Excel Export", value=st.session_state.export_excel, key="export_excel")
 
 
 main_content_col, help_col = st.columns([3, 1])
