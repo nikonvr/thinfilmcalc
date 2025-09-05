@@ -1,7 +1,7 @@
 streamlit
 numpy
-matplotlib
+plotly
 pandas
 scipy
-xlsxwriter
 numba
+openpyxl
