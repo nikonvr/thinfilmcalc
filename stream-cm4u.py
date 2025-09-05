@@ -657,7 +657,7 @@ def main():
 
     run_button = setup_sidebar(material_names)
     
-    st.title("Calculateur de Couches Minces Avancé")
+    st.title("Calculateur de Couches Minces")
 
     if run_button:
         st.session_state.log_stream.truncate(0); st.session_state.log_stream.seek(0)
@@ -734,4 +734,5 @@ def main():
 
 if __name__ == "__main__":
     main()
+
 
