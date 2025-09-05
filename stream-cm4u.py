@@ -387,7 +387,7 @@ def plot_stack_structure(res, params, multipliers):
         xaxis_title='Épaisseur (nm)',
         yaxis_title='Couche',
         template='plotly_white',
-        yaxis={'categoryorder':'total ascending'} # Affiche la couche 1 en bas
+        yaxis={'categoryorder':'array', 'categoryarray': layer_labels} # Correction de l'ordre d'affichage
     )
     return fig
 
